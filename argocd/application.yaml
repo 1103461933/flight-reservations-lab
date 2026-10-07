@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: stratos-rnd-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: stratos-rnd-dev
+  source:
+    repoURL: "https://github.com/<ORG>/flight-reservations-lab.git"
+    targetRevision: main
+    path: .
+    directory:
+      recurse: true
+      include: "{namespace,quota,kafka,couchbase,flink,argo-workflows}/**/*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: stratos-rnd-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true

@@ -1,0 +1,27 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: stratos-rnd-dev
+  labels:
+    strimzi.io/cluster: flight-kafka
+spec:
+  replicas: 1
+  roles:
+    - controller
+    - broker
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 5Gi
+        deleteClaim: false
+        class: managed-csi
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: "1"

@@ -1,0 +1,76 @@
+name: Build and Push Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag de imagen (ej: 1.0.1)"
+        required: true
+        default: "1.0.1"
+
+env:
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
+jobs:
+  build-flink:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - run: |
+          docker build -t ${{ env.DOCKERHUB_USERNAME }}/flink-flight-reservations:${{ inputs.tag }} application/flink/
+          docker push ${{ env.DOCKERHUB_USERNAME }}/flink-flight-reservations:${{ inputs.tag }}
+
+  build-producer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - run: |
+          docker build -t ${{ env.DOCKERHUB_USERNAME }}/flight-reservation-producer:${{ inputs.tag }} application/producer/
+          docker push ${{ env.DOCKERHUB_USERNAME }}/flight-reservation-producer:${{ inputs.tag }}
+
+  build-validator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - run: |
+          docker build -t ${{ env.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ inputs.tag }} application/validator/
+          docker push ${{ env.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ inputs.tag }}
+
+  update-manifests:
+    needs: [build-flink, build-producer, build-validator]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Actualizar tags en manifests
+        run: |
+          sed -i "s|image: .*/flink-flight-reservations:.*|image: ${{ env.DOCKERHUB_USERNAME }}/flink-flight-reservations:${{ inputs.tag }}|" flink/flink-deployment.yaml
+          sed -i "s|image: .*/flight-reservation-producer:.*|image: ${{ env.DOCKERHUB_USERNAME }}/flight-reservation-producer:${{ inputs.tag }}|" argo-workflows/integration-test-workflow-template.yaml
+          sed -i "s|image: .*/flight-reservations-validator:.*|image: ${{ env.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ inputs.tag }}|" argo-workflows/integration-test-workflow-template.yaml
+
+      - name: Commit y push (solo si hay cambios)
+        run: |
+          if git diff --quiet; then
+            echo "No manifest changes required."
+          else
+            git add flink/flink-deployment.yaml \
+                    argo-workflows/integration-test-workflow-template.yaml
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: update image tags to ${{ inputs.tag }}"
+            git push
+          fi

@@ -1,0 +1,77 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: couchbase-indexes
+  namespace: stratos-rnd-dev
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: create-indexes
+          image: couchbase/server:7.6.4
+          command:
+            - bash
+            - -c
+            - |
+              CB_HOST="flight-couchbase-srv"
+              CB_QUERY="http://${CB_HOST}:8093"
+              CB_ADMIN="http://${CB_HOST}:8091"
+
+              echo "Esperando a Couchbase admin (8091)..."
+              READY=false
+              for i in $(seq 1 60); do
+                if curl -s -u Administrator:"$COUCHBASE_PASSWORD" \
+                    "${CB_ADMIN}/pools" >/dev/null 2>&1; then
+                  READY=true; break
+                fi
+                sleep 5
+              done
+              [ "$READY" = "true" ] || { echo "ERROR: admin no responde"; exit 1; }
+
+              echo "Esperando a keyspace..."
+              KEYSPACE_READY=false
+              for i in $(seq 1 60); do
+                RES=$(curl -s -u Administrator:"$COUCHBASE_PASSWORD" \
+                  -H "Content-Type: application/json" \
+                  -d '{"statement":"SELECT COUNT(*) FROM `flight-reservations`.`reservations`.`processed`;"}' \
+                  "${CB_QUERY}/query/service")
+                if echo "$RES" | grep -q '"status": *"success"'; then
+                  KEYSPACE_READY=true; break
+                fi
+                sleep 5
+              done
+              [ "$KEYSPACE_READY" = "true" ] || { echo "ERROR: keyspace no disponible"; exit 1; }
+
+              run_index() {
+                local stmt="$1"
+                local resp
+                resp=$(curl -s -u Administrator:"$COUCHBASE_PASSWORD" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"statement\": \"$stmt\"}" \
+                  "${CB_QUERY}/query/service")
+                if echo "$resp" | grep -q '"status":"success"'; then
+                  echo "OK: $stmt"
+                elif echo "$resp" | grep -qi "already exists"; then
+                  echo "SKIP: $stmt"
+                else
+                  echo "ERROR: $stmt"; echo "$resp"; exit 1
+                fi
+              }
+
+              run_index "CREATE PRIMARY INDEX ON \`flight-reservations\`.\`reservations\`.\`processed\`"
+              run_index "CREATE INDEX idx_reservationId ON \`flight-reservations\`.\`reservations\`.\`processed\`(reservationId)"
+              run_index "CREATE INDEX idx_flightNumber ON \`flight-reservations\`.\`reservations\`.\`processed\`(flightNumber)"
+              run_index "CREATE INDEX idx_passengerId ON \`flight-reservations\`.\`reservations\`.\`processed\`(passengerId)"
+              run_index "CREATE INDEX idx_origin_destination ON \`flight-reservations\`.\`reservations\`.\`processed\`(origin, destination)"
+              run_index "CREATE INDEX idx_status ON \`flight-reservations\`.\`reservations\`.\`processed\`(status)"
+              run_index "CREATE INDEX idx_flightCount ON \`flight-reservations\`.\`reservations\`.\`processed\`(flightCount)"
+
+              echo "Todos los índices procesados correctamente."
+          env:
+            - name: COUCHBASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: couchbase-auth
+                  key: password

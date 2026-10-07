@@ -1,0 +1,72 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: flight-reservations-integration
+  namespace: stratos-rnd-dev
+spec:
+  entrypoint: integration-test
+  serviceAccountName: argo-workflow
+  arguments:
+    parameters:
+      - name: test-mode
+        value: "initial"
+      - name: expected-av123
+        value: "37"
+      - name: expected-av456
+        value: "63"
+      - name: expected-flight-count-av123
+        value: "37"
+      - name: expected-flight-count-av456
+        value: "63"
+  templates:
+    - name: integration-test
+      steps:
+        - - name: validate-flink-running
+            template: validate-flink-running
+        - - name: produce-events
+            template: produce-events
+        - - name: wait-and-validate
+            template: wait-and-validate
+
+    - name: validate-flink-running
+      container:
+        image: bitnami/kubectl:1.30.2
+        command: [sh, -c]
+        args:
+          - |
+            kubectl get flinkdeployment flight-reservation-processor \
+              -n stratos-rnd-dev \
+              -o jsonpath='{.status.jobStatus.state}' | grep RUNNING
+
+    - name: produce-events
+      container:
+        image: xlen911/flight-reservation-producer:1.0.1
+        command: [python, /app/producer.py]
+        env:
+          - name: KAFKA_BOOTSTRAP
+            value: "flight-kafka-kafka-bootstrap:9092"
+          - name: TEST_MODE
+            value: "{{workflow.parameters.test-mode}}"
+
+    - name: wait-and-validate
+      container:
+        image: xlen911/flight-reservations-validator:1.0.1
+        command: [/validate.sh]
+        env:
+          - name: COUCHBASE_HOST
+            value: "flight-couchbase-srv"
+          - name: COUCHBASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: couchbase-auth
+                key: password
+          - name: EXPECTED_AV123
+            value: "{{workflow.parameters.expected-av123}}"
+          - name: EXPECTED_AV456
+            value: "{{workflow.parameters.expected-av456}}"
+          - name: EXPECTED_FC_AV123
+            value: "{{workflow.parameters.expected-flight-count-av123}}"
+          - name: EXPECTED_FC_AV456
+            value: "{{workflow.parameters.expected-flight-count-av456}}"
+          - name: TEST_MODE
+            value: "{{workflow.parameters.test-mode}}"

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stratos-rnd-dev
+  labels:
+    app.kubernetes.io/part-of: flight-reservations-lab
+    argocd.argoproj.io/managed-by: argocd

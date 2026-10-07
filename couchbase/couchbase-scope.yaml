@@ -1,0 +1,13 @@
+apiVersion: couchbase.com/v2
+kind: CouchbaseScope
+metadata:
+  name: reservations
+  namespace: stratos-rnd-dev
+spec:
+  collections:
+    managed: true
+    resources:
+      - kind: CouchbaseCollection
+        name: bookings
+      - kind: CouchbaseCollection
+        name: processed

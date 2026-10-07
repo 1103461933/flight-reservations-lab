@@ -1,0 +1,28 @@
+# ResourceQuota del namespace stratos-rnd-dev.
+#
+# IMPORTANTE: El namespace ya existe. Verificar consumo real antes de aplicar.
+#
+# Cálculo previsto (solo recursos de este laboratorio):
+#   Flink TM×3 (20 GiB) + Kafka (5 GiB) + Couchbase (20 GiB) = 85 GiB
+#   Tras migración: 10+10+10 + 5 + 20 = 55 GiB
+#
+# Kubernetes contabiliza cada PVC contra requests.storage al crear el PVC.
+# Con 85 GiB en uso, no se pueden crear 3 PVC nuevos de 10 GiB (30 GiB)
+# sin eliminar antes los antiguos (85 + 30 = 115 > 100).
+#
+# NOTA: Kubernetes NO permite reducir un PVC existente. La migración
+# requiere eliminar los PVC antiguos y recrearlos con el nuevo tamaño.
+#
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: stratos-quota
+  namespace: stratos-rnd-dev
+spec:
+  hard:
+    requests.storage: 100Gi
+    persistentvolumeclaims: "10"
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi

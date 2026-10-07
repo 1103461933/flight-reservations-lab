@@ -1,0 +1,105 @@
+# v12: mode: standalone, PVC montado en podTemplate,
+# local recovery con working directory y resource-id determinístico.
+#
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: flight-reservation-processor
+  namespace: stratos-rnd-dev
+spec:
+  image: xlen911/flink-flight-reservations:1.0.1
+  imagePullPolicy: Always
+  flinkVersion: v1_20
+  mode: standalone
+  serviceAccount: flink
+
+  flinkConfiguration:
+    # --- Estado ---
+    state.backend: rocksdb
+    state.backend.incremental: "true"
+    state.backend.local-recovery: "true"
+    process.taskmanager.working-dir: "/pv"
+    # --- Checkpoints (ABFS / ADLS Gen2) ---
+    state.checkpoints.dir: "abfss://flink-checkpoints@<SA>.dfs.core.windows.net/checkpoints"
+    state.checkpoints.num-retained: "5"
+    # --- Savepoints (ABFS) ---
+    state.savepoints.dir: "abfss://flink-savepoints@<SA>.dfs.core.windows.net/savepoints"
+    # --- High Availability (ABFS) ---
+    high-availability.type: kubernetes
+    high-availability.storageDir: "abfss://flink-ha@<SA>.dfs.core.windows.net/ha"
+    # --- ABFS con Workload Identity ---
+    fs.azure.account.auth.type: "OAuth"
+    fs.azure.account.oauth.provider.type: "org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider"
+    fs.azure.account.oauth2.msi.tenant: "${env.AZURE_TENANT_ID}"
+    fs.azure.account.oauth2.client.id: "${env.AZURE_CLIENT_ID}"
+    fs.azure.account.oauth2.token.file: "${env.AZURE_FEDERATED_TOKEN_FILE}"
+    # --- PyFlink ---
+    python.client.executable: "/usr/bin/python3"
+    python.executable: "/usr/bin/python3"
+    # --- Parámetros del Operator ---
+    kubernetes.operator.job.restart.failed: "true"
+    kubernetes.operator.savepoint.history.max.count: "5"
+    kubernetes.operator.savepoint.trigger.grace-period: "5m"
+    # --- Slots ---
+    taskmanager.numberOfTaskSlots: "2"
+    # --- Identidad determinística para local recovery ---
+    taskmanager.resource-id: "$(POD_NAME)"
+
+  jobManager:
+    replicas: 1
+    resource:
+      memory: "2048m"
+      cpu: 1
+
+  taskManager:
+    replicas: 3
+    resource:
+      memory: "4096m"
+      cpu: 2
+    volumeClaimTemplates:
+      - metadata:
+          name: taskmanager-state
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: managed-csi
+          resources:
+            requests:
+              storage: 20Gi
+
+  podTemplate:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+    spec:
+      containers:
+        - name: flink-main-container
+          env:
+            - name: COUCHBASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: couchbase-auth
+                  key: password
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: taskmanager-state
+              mountPath: /pv
+
+  job:
+    # PENDIENTE DE VALIDACIÓN EN RUNTIME
+    jarURI: "local:///opt/flink/lib/flink-python-1.20.0.jar"
+    entryClass: "org.apache.flink.client.python.PythonDriver"
+    args:
+      - "-pyclientexec"
+      - "/usr/bin/python3"
+      - "-py"
+      - "/opt/flink/usrlib/flight_reservations.py"
+    parallelism: 6
+    upgradeMode: savepoint
+    state: running
+    # initialSavepointPath y savepointRedeployNonce se activan durante
+    # la restauración. El nonce debe incrementarse en cada restauración.
+    # initialSavepointPath: ""
+    # savepointRedeployNonce: 1
