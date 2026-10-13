@@ -1,15 +1,17 @@
 """
-Productor con modo de operación determinista.
+Productor determinista de reservas para las pruebas de integración.
 
-TEST_MODE=initial:  genera 100 eventos
-  AV123 → 37 (RES-10001..RES-10037)
-  AV456 → 63 (RES-10038..RES-10100)
+TEST_MODE=initial:
+  Genera 100 eventos:
+    AV123 -> 37 reservas, RES-10001..RES-10037
+    AV456 -> 63 reservas, RES-10038..RES-10100
 
-TEST_MODE=post-migration: genera 2 eventos
-  RES-10101 → AV123
-  RES-10102 → AV456
+TEST_MODE=post-migration:
+  Genera 2 eventos:
+    RES-10101 -> AV123
+    RES-10102 -> AV456
 
-Si hay errores de delivery, el producer falla explícitamente.
+El proceso falla si quedan mensajes sin entregar o se detectan errores.
 """
 
 import json
@@ -20,37 +22,76 @@ from datetime import datetime, timezone
 
 from confluent_kafka import Producer
 
+
 KAFKA_BOOTSTRAP = os.environ.get(
-    "KAFKA_BOOTSTRAP", "flight-kafka-kafka-bootstrap:9092"
+    "KAFKA_BOOTSTRAP",
+    "flight-kafka-kafka-bootstrap:9092",
 )
-KAFKA_TOPIC = os.environ.get("KAFKA_TOPIC", "flight-reservations")
+
+KAFKA_TOPIC = os.environ.get(
+    "KAFKA_TOPIC",
+    "flight-reservations",
+)
+
 TEST_MODE = os.environ.get("TEST_MODE", "initial")
-INTERVAL_MS = int(os.environ.get("INTERVAL_MS", "50"))
+
+INTERVAL_MS = int(
+    os.environ.get("INTERVAL_MS", "50")
+)
 
 
 if TEST_MODE == "initial":
-    FLIGHT_PLAN = [("AV123", "BOG", "MIA")] * 37 + [("AV456", "MDE", "JFK")] * 63
+    FLIGHT_PLAN = (
+        [("AV123", "BOG", "MIA")] * 37
+        + [("AV456", "MDE", "JFK")] * 63
+    )
+
 elif TEST_MODE == "post-migration":
     FLIGHT_PLAN = [
         ("AV123", "BOG", "MIA"),
         ("AV456", "MDE", "JFK"),
     ]
-else:
-    sys.exit(f"TEST_MODE inválido: {TEST_MODE} (usar 'initial' o 'post-migration')")
 
-STATUSES = ["CONFIRMED", "PENDING", "CANCELLED"]
+else:
+    sys.exit(
+        f"TEST_MODE inválido: {TEST_MODE}. "
+        "Usar 'initial' o 'post-migration'."
+    )
+
+
+if INTERVAL_MS < 0:
+    sys.exit("INTERVAL_MS no puede ser negativo.")
+
+
+STATUSES = [
+    "CONFIRMED",
+    "PENDING",
+    "CANCELLED",
+]
 
 delivery_errors = []
 
 
 def delivery_report(err, msg):
     if err is not None:
-        delivery_errors.append(f"Error al entregar mensaje: {err}")
-    else:
-        print(f"Mensaje entregado a {msg.topic()} [{msg.partition()}]")
+        delivery_errors.append(
+            f"Error al entregar mensaje: {err}"
+        )
+
+        return
+
+    print(
+        f"Mensaje entregado a "
+        f"{msg.topic()} [{msg.partition()}]"
+    )
 
 
-def generate_event(index: int, flight: str, origin: str, destination: str) -> dict:
+def generate_event(
+    index: int,
+    flight: str,
+    origin: str,
+    destination: str,
+) -> dict:
     return {
         "reservationId": f"RES-{10000 + index}",
         "passengerId": f"PAX-{index:03d}",
@@ -60,39 +101,83 @@ def generate_event(index: int, flight: str, origin: str, destination: str) -> di
         "departure": datetime.now(timezone.utc).isoformat(),
         "seat": f"{(index % 30) + 1}{'ABCDEF'[index % 6]}",
         "status": STATUSES[index % len(STATUSES)],
-        "price": round(100.0 + (index * 7.5) % 800.0, 2),
+        "price": round(
+            100.0 + (index * 7.5) % 800.0,
+            2,
+        ),
         "currency": "USD",
     }
 
 
 def main():
-    producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP})
+    producer = Producer(
+        {
+            "bootstrap.servers": KAFKA_BOOTSTRAP,
+        }
+    )
+
     total = len(FLIGHT_PLAN)
-    print(f"TEST_MODE={TEST_MODE}, enviando {total} eventos a {KAFKA_TOPIC}...")
 
-    start_index = 1 if TEST_MODE == "initial" else 101
+    print(
+        f"TEST_MODE={TEST_MODE}, "
+        f"enviando {total} eventos a {KAFKA_TOPIC}..."
+    )
 
-    for i in range(total):
-        flight, origin, destination = FLIGHT_PLAN[i]
-        event = generate_event(start_index + i, flight, origin, destination)
-        producer.produce(
-            KAFKA_TOPIC,
-            key=event["flightNumber"],
-            value=json.dumps(event),
-            callback=delivery_report,
+    start_index = (
+        1 if TEST_MODE == "initial" else 101
+    )
+
+    try:
+        for i, (flight, origin, destination) in enumerate(
+            FLIGHT_PLAN
+        ):
+            event = generate_event(
+                start_index + i,
+                flight,
+                origin,
+                destination,
+            )
+
+            producer.produce(
+                KAFKA_TOPIC,
+                key=event["flightNumber"],
+                value=json.dumps(event),
+                callback=delivery_report,
+            )
+
+            producer.poll(0)
+
+            if INTERVAL_MS:
+                time.sleep(INTERVAL_MS / 1000.0)
+
+    except BufferError as exc:
+        producer.flush(30)
+
+        sys.exit(
+            f"Cola de mensajes llena; no se pudo encolar "
+            f"el evento: {exc}"
         )
-        producer.poll(0)
-        time.sleep(INTERVAL_MS / 1000.0)
 
-    producer.flush()
+    remaining = producer.flush(30)
+
+    if remaining > 0:
+        delivery_errors.append(
+            f"Quedaron {remaining} mensajes sin confirmar "
+            "al finalizar el timeout."
+        )
 
     if delivery_errors:
         print("Errores de delivery detectados:")
-        for e in delivery_errors:
-            print(e)
+
+        for error in delivery_errors:
+            print(error)
+
         sys.exit(1)
 
-    print(f"Productor finalizado. Enviados {total} eventos sin errores.")
+    print(
+        f"Productor finalizado. "
+        f"{total} eventos entregados correctamente."
+    )
 
 
 if __name__ == "__main__":

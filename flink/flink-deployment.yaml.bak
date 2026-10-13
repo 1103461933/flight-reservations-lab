@@ -1,0 +1,79 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: flink-storage-validation
+  namespace: stratos-rnd-dev
+
+spec:
+  image: xlen911/flink-azure:1.19.3
+  flinkVersion: v1_19
+  mode: standalone
+  serviceAccount: flink
+  imagePullPolicy: Always
+
+  podTemplate:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+
+  flinkConfiguration:
+    # Checkpoint configuration
+    execution.checkpointing.interval: "30 s"
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.timeout: "5 min"
+    execution.checkpointing.min-pause: "5 s"
+    execution.checkpointing.max-retained-checkpoints: "5"
+
+    # State backend
+    state.backend.type: rocksdb
+    state.backend.incremental: "true"
+    state.backend.local-recovery: "true"
+
+    # Azure Blob Storage authentication
+    fs.azure.account.auth.type.flinkstorage911.dfs.core.windows.net: OAuth
+    fs.azure.account.oauth.provider.type.flinkstorage911.dfs.core.windows.net: org.apache.hadoop.fs.azurebfs.oauth2.MsiTokenProvider
+
+    # Azure Blob Storage: checkpoints
+    state.checkpoints.dir: "abfss://flink-checkpoints@flinkstorage911.dfs.core.windows.net/checkpoints"
+
+    # Azure Blob Storage: savepoints
+    state.savepoints.dir: "abfss://flink-savepoints@flinkstorage911.dfs.core.windows.net/savepoints"
+
+    # High availability
+    high-availability.type: kubernetes
+    high-availability.storageDir: "abfss://flink-ha@flinkstorage911.dfs.core.windows.net/ha"
+
+    # Local TaskManager state
+    taskmanager.state.local.root-dirs: "/pv/localState"
+
+  jobManager:
+    resource:
+      cpu: 1
+      memory: "2048m"
+
+  taskManager:
+    replicas: 2
+
+    resource:
+      cpu: 1
+      memory: "2048m"
+
+    podTemplate:
+      spec:
+        volumes:
+          - name: taskmanager-storage
+            ephemeral:
+              volumeClaimTemplate:
+                spec:
+                  accessModes:
+                    - ReadWriteOnce
+                  storageClassName: managed-csi
+                  resources:
+                    requests:
+                      storage: 20Gi
+
+        containers:
+          - name: flink-main-container
+            volumeMounts:
+              - name: taskmanager-storage
+                mountPath: /pv

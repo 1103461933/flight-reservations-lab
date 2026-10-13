@@ -4,73 +4,222 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag de imagen (ej: 1.0.1)"
+        description: "Tag de imagen, por ejemplo 1.0.1"
         required: true
         default: "1.0.1"
+        type: string
 
-env:
-  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+permissions:
+  contents: read
 
 jobs:
-  build-flink:
+  validate-tag:
+    name: Validate image tag
     runs-on: ubuntu-latest
+
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - name: Validate tag format
+        id: validate
+        env:
+          IMAGE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "ERROR: Invalid Docker image tag."
+            exit 1
+          fi
+
+          echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+  build-flink:
+    name: Build Flink image
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - run: |
-          docker build -t ${{ env.DOCKERHUB_USERNAME }}/flink-flight-reservations:${{ inputs.tag }} application/flink/
-          docker push ${{ env.DOCKERHUB_USERNAME }}/flink-flight-reservations:${{ inputs.tag }}
+
+      - name: Build and push Flink image
+        uses: docker/build-push-action@v6
+        with:
+          context: application/flink
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/flink-flight-reservations:${{ needs.validate-tag.outputs.tag }}
 
   build-producer:
+    name: Build producer image
+    needs: validate-tag
     runs-on: ubuntu-latest
+    environment: dev
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - run: |
-          docker build -t ${{ env.DOCKERHUB_USERNAME }}/flight-reservation-producer:${{ inputs.tag }} application/producer/
-          docker push ${{ env.DOCKERHUB_USERNAME }}/flight-reservation-producer:${{ inputs.tag }}
+
+      - name: Build and push producer image
+        uses: docker/build-push-action@v6
+        with:
+          context: application/producer
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/flight-reservation-producer:${{ needs.validate-tag.outputs.tag }}
 
   build-validator:
+    name: Build validator image
+    needs: validate-tag
     runs-on: ubuntu-latest
+    environment: dev
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - run: |
-          docker build -t ${{ env.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ inputs.tag }} application/validator/
-          docker push ${{ env.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ inputs.tag }}
+
+      - name: Build and push validator image
+        uses: docker/build-push-action@v6
+        with:
+          context: application/validator
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ needs.validate-tag.outputs.tag }}
 
   update-manifests:
-    needs: [build-flink, build-producer, build-validator]
+    name: Update deployment manifests
+    needs:
+      - validate-tag
+      - build-flink
+      - build-producer
+      - build-validator
+
     runs-on: ubuntu-latest
+    environment: dev
+
     permissions:
       contents: write
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Actualizar tags en manifests
+      - name: Update image tags
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_TAG: ${{ needs.validate-tag.outputs.tag }}
+        shell: bash
         run: |
-          sed -i "s|image: .*/flink-flight-reservations:.*|image: ${{ env.DOCKERHUB_USERNAME }}/flink-flight-reservations:${{ inputs.tag }}|" flink/flink-deployment.yaml
-          sed -i "s|image: .*/flight-reservation-producer:.*|image: ${{ env.DOCKERHUB_USERNAME }}/flight-reservation-producer:${{ inputs.tag }}|" argo-workflows/integration-test-workflow-template.yaml
-          sed -i "s|image: .*/flight-reservations-validator:.*|image: ${{ env.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ inputs.tag }}|" argo-workflows/integration-test-workflow-template.yaml
+          set -euo pipefail
 
-      - name: Commit y push (solo si hay cambios)
+          python3 <<'PY'
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          username = os.environ["DOCKERHUB_USERNAME"]
+          tag = os.environ["IMAGE_TAG"]
+
+          images = {
+              "flink/flink-deployment.yaml": "flink-flight-reservations",
+              "argo-workflows/integration-test-workflow-template.yaml": (
+                  "flight-reservation-producer",
+                  "flight-reservations-validator",
+              ),
+          }
+
+          for filename, expected_images in images.items():
+              path = Path(filename)
+
+              if not path.is_file():
+                  sys.exit(f"ERROR: Manifest not found: {filename}")
+
+              if isinstance(expected_images, str):
+                  expected_images = (expected_images,)
+
+              lines = path.read_text(encoding="utf-8").splitlines(
+                  keepends=True
+              )
+
+              updated_lines = []
+              counts = {image: 0 for image in expected_images}
+
+              for line in lines:
+                  updated = line
+
+                  if re.match(r"^\s*image\s*:", line):
+                      for image_name in expected_images:
+                          pattern = (
+                              r"(^\s*image\s*:\s*)"
+                              r"(?:[^\s/]+/)?"
+                              + re.escape(image_name)
+                              + r":[^\s#]+"
+                          )
+
+                          updated, count = re.subn(
+                              pattern,
+                              rf"\g<1>{username}/{image_name}:{tag}",
+                              updated,
+                          )
+
+                          counts[image_name] += count
+
+                  updated_lines.append(updated)
+
+              for image_name, count in counts.items():
+                  if count == 0:
+                      sys.exit(
+                          f"ERROR: No image reference found for "
+                          f"{image_name} in {filename}"
+                      )
+
+              path.write_text(
+                  "".join(updated_lines),
+                  encoding="utf-8",
+              )
+
+              print(f"Updated {filename}: {counts}")
+          PY
+
+      - name: Commit and push manifest changes
+        env:
+          IMAGE_TAG: ${{ needs.validate-tag.outputs.tag }}
+        shell: bash
         run: |
-          if git diff --quiet; then
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            flink/flink-deployment.yaml \
+            argo-workflows/integration-test-workflow-template.yaml
+
+          if git diff --cached --quiet; then
             echo "No manifest changes required."
-          else
-            git add flink/flink-deployment.yaml \
-                    argo-workflows/integration-test-workflow-template.yaml
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git commit -m "chore: update image tags to ${{ inputs.tag }}"
-            git push
+            exit 0
           fi
+
+          git commit -m "chore: update image tags to ${IMAGE_TAG}"
+          git push

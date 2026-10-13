@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: couchbase-tools-test
+  namespace: stratos-rnd-dev
+spec:
+  restartPolicy: Never
+  containers:
+    - name: tools-test
+      image: couchbase/server:7.6.4
+      command:
+        - bash
+        - -c
+        - |
+          echo "Pod preparado para pruebas"
+          sleep 1800
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi

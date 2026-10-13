@@ -1,28 +1,36 @@
 apiVersion: couchbase.com/v2
 kind: CouchbaseCluster
+
 metadata:
   name: flight-couchbase
   namespace: stratos-rnd-dev
+
 spec:
   image: couchbase/server:7.6.4
+
   security:
     adminSecret: couchbase-auth
+
   cluster:
-    dataServiceMemoryQuota: 256Mi
-    indexServiceMemoryQuota: 256Mi
-    analyticsServiceMemoryQuota: 0
-    eventingServiceMemoryQuota: 0
+    dataServiceMemoryQuota: 512Mi
+    indexServiceMemoryQuota: 512Mi
+    analyticsServiceMemoryQuota: 1Gi
+    eventingServiceMemoryQuota: 256Mi
     autoFailoverTimeout: 30s
     autoFailoverMaxCount: 1
+
   buckets:
     managed: true
+
   servers:
     - name: data-node
       size: 1
+
       services:
         - data
         - index
         - query
+
       resources:
         requests:
           memory: 2Gi
@@ -30,16 +38,21 @@ spec:
         limits:
           memory: 3Gi
           cpu: "1"
+
       volumeMounts:
         default: couchbase-data
-      volumeClaimTemplates:
-        - metadata:
-            name: couchbase-data
-          spec:
-            storageClassName: managed-csi
-            resources:
-              requests:
-                storage: 20Gi
+
+  volumeClaimTemplates:
+    - metadata:
+        name: couchbase-data
+      spec:
+        storageClassName: managed-csi
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi
+
   networking:
     exposeAdminConsole: true
     adminConsoleServices:

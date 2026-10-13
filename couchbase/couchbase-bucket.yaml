@@ -4,10 +4,9 @@ metadata:
   name: flight-reservations
   namespace: stratos-rnd-dev
 spec:
-  cluster: flight-couchbase
   memoryQuota: 256Mi
   replicas: 0
-  enableFlush: true
+  enableFlush: false
   evictionPolicy: fullEviction
   compressionMode: passive
   scopes:

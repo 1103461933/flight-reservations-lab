@@ -1,2 +1,2 @@
-apache-flink==1.20.0
+apache-flink==1.19.3
 couchbase==4.3.0

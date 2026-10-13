@@ -4,7 +4,7 @@ metadata:
   name: bookings
   namespace: stratos-rnd-dev
 spec:
-  maxTTL: 0
+  maxTTL: "0"
 ---
 apiVersion: couchbase.com/v2
 kind: CouchbaseCollection
@@ -12,4 +12,4 @@ metadata:
   name: processed
   namespace: stratos-rnd-dev
 spec:
-  maxTTL: 0
+  maxTTL: "0"

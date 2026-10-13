@@ -3,75 +3,287 @@ kind: Job
 metadata:
   name: couchbase-indexes
   namespace: stratos-rnd-dev
+  labels:
+    app: couchbase-indexes
+
 spec:
   backoffLimit: 3
+  activeDeadlineSeconds: 900
+
   template:
+    metadata:
+      labels:
+        app: couchbase-indexes
+
     spec:
       restartPolicy: OnFailure
+
       containers:
         - name: create-indexes
           image: couchbase/server:7.6.4
+
           command:
-            - bash
+            - /usr/bin/bash
             - -c
             - |
-              CB_HOST="flight-couchbase-srv"
-              CB_QUERY="http://${CB_HOST}:8093"
+              set -uo pipefail
+
+              CB_HOST="flight-couchbase"
               CB_ADMIN="http://${CB_HOST}:8091"
+              CB_QUERY="http://${CB_HOST}:8093"
+              CB_USER="Administrator"
 
-              echo "Esperando a Couchbase admin (8091)..."
-              READY=false
+              KEYSPACE='`flight-reservations`.`reservations`.`processed`'
+
+              echo "=========================================="
+              echo " Couchbase Index Initialization"
+              echo " Namespace: stratos-rnd-dev"
+              echo " Cluster: flight-couchbase"
+              echo "=========================================="
+
+              if [ -z "${COUCHBASE_PASSWORD:-}" ]; then
+                echo "ERROR: Falta COUCHBASE_PASSWORD."
+                exit 1
+              fi
+
+              # 1. Esperar a Couchbase Admin
+              echo ""
+              echo "Esperando a Couchbase Admin..."
+
+              ADMIN_READY=false
+
               for i in $(seq 1 60); do
-                if curl -s -u Administrator:"$COUCHBASE_PASSWORD" \
-                    "${CB_ADMIN}/pools" >/dev/null 2>&1; then
-                  READY=true; break
+                HTTP_CODE=$(curl -sS \
+                  --connect-timeout 5 \
+                  --max-time 10 \
+                  -u "${CB_USER}:${COUCHBASE_PASSWORD}" \
+                  -o /dev/null \
+                  -w "%{http_code}" \
+                  "${CB_ADMIN}/pools" 2>/dev/null || true)
+
+                if [ "${HTTP_CODE}" = "200" ]; then
+                  ADMIN_READY=true
+                  echo "OK: Couchbase Admin disponible."
+                  break
                 fi
+
+                echo "Intento ${i}/60: HTTP=${HTTP_CODE:-sin respuesta}"
                 sleep 5
               done
-              [ "$READY" = "true" ] || { echo "ERROR: admin no responde"; exit 1; }
 
-              echo "Esperando a keyspace..."
-              KEYSPACE_READY=false
+              if [ "${ADMIN_READY}" != "true" ]; then
+                echo "ERROR: Couchbase Admin no responde correctamente."
+                exit 1
+              fi
+
+              # 2. Esperar a Query Service
+              echo ""
+              echo "Esperando a Query Service..."
+
+              QUERY_READY=false
+
               for i in $(seq 1 60); do
-                RES=$(curl -s -u Administrator:"$COUCHBASE_PASSWORD" \
+                HTTP_CODE=$(curl -sS \
+                  --connect-timeout 5 \
+                  --max-time 15 \
+                  -u "${CB_USER}:${COUCHBASE_PASSWORD}" \
                   -H "Content-Type: application/json" \
-                  -d '{"statement":"SELECT COUNT(*) FROM `flight-reservations`.`reservations`.`processed`;"}' \
-                  "${CB_QUERY}/query/service")
-                if echo "$RES" | grep -q '"status": *"success"'; then
-                  KEYSPACE_READY=true; break
+                  --data '{"statement":"SELECT 1 AS ready"}' \
+                  -o /tmp/query-response.json \
+                  -w "%{http_code}" \
+                  "${CB_QUERY}/query/service" 2>/dev/null || true)
+
+                if [ "${HTTP_CODE}" = "200" ] &&
+                   grep -Eq '"status"[[:space:]]*:[[:space:]]*"success"' \
+                     /tmp/query-response.json 2>/dev/null; then
+                  QUERY_READY=true
+                  echo "OK: Query Service disponible."
+                  break
                 fi
+
+                echo "Intento ${i}/60: Query HTTP=${HTTP_CODE:-sin respuesta}"
                 sleep 5
               done
-              [ "$KEYSPACE_READY" = "true" ] || { echo "ERROR: keyspace no disponible"; exit 1; }
 
+              if [ "${QUERY_READY}" != "true" ]; then
+                echo "ERROR: Query Service no está disponible."
+                cat /tmp/query-response.json 2>/dev/null || true
+                exit 1
+              fi
+
+              # 3. Comprobar que la colección existe y es accesible
+              echo ""
+              echo "Verificando el keyspace ${KEYSPACE}..."
+
+              KEYSPACE_READY=false
+
+              for i in $(seq 1 60); do
+                HTTP_CODE=$(curl -sS \
+                  --connect-timeout 5 \
+                  --max-time 15 \
+                  -u "${CB_USER}:${COUCHBASE_PASSWORD}" \
+                  -H "Content-Type: application/json" \
+                  --data "{\"statement\":\"SELECT COUNT(*) AS total FROM ${KEYSPACE}\"}" \
+                  -o /tmp/keyspace-response.json \
+                  -w "%{http_code}" \
+                  "${CB_QUERY}/query/service" 2>/dev/null || true)
+
+                if [ "${HTTP_CODE}" = "200" ] &&
+                   grep -Eq '"status"[[:space:]]*:[[:space:]]*"success"' \
+                     /tmp/keyspace-response.json 2>/dev/null; then
+                  KEYSPACE_READY=true
+                  echo "OK: Keyspace accesible."
+                  break
+                fi
+
+                echo "Intento ${i}/60: esperando keyspace..."
+                sleep 5
+              done
+
+              if [ "${KEYSPACE_READY}" != "true" ]; then
+                echo "ERROR: No se pudo consultar el keyspace."
+                cat /tmp/keyspace-response.json 2>/dev/null || true
+                exit 1
+              fi
+
+              # 4. Función para crear los índices
               run_index() {
                 local stmt="$1"
-                local resp
-                resp=$(curl -s -u Administrator:"$COUCHBASE_PASSWORD" \
+                local response_file="/tmp/index-response.json"
+                local http_code
+                local payload
+
+                echo ""
+                echo "SQL++: ${stmt}"
+
+                # Las sentencias utilizadas no contienen comillas dobles.
+                payload="{\"statement\":\"${stmt}\"}"
+
+                http_code=$(curl -sS \
+                  --connect-timeout 5 \
+                  --max-time 120 \
+                  -u "${CB_USER}:${COUCHBASE_PASSWORD}" \
                   -H "Content-Type: application/json" \
-                  -d "{\"statement\": \"$stmt\"}" \
-                  "${CB_QUERY}/query/service")
-                if echo "$resp" | grep -q '"status":"success"'; then
-                  echo "OK: $stmt"
-                elif echo "$resp" | grep -qi "already exists"; then
-                  echo "SKIP: $stmt"
-                else
-                  echo "ERROR: $stmt"; echo "$resp"; exit 1
+                  --data "${payload}" \
+                  -o "${response_file}" \
+                  -w "%{http_code}" \
+                  "${CB_QUERY}/query/service" 2>/dev/null || true)
+
+                if [ "${http_code}" != "200" ]; then
+                  echo "ERROR: HTTP ${http_code:-sin respuesta}"
+                  cat "${response_file}" 2>/dev/null || true
+                  exit 1
                 fi
+
+                if grep -Eq '"status"[[:space:]]*:[[:space:]]*"success"' \
+                    "${response_file}"; then
+                  echo "OK: Consulta aceptada."
+                  return 0
+                fi
+
+                if grep -qi 'already exists' "${response_file}"; then
+                  echo "AVISO: El índice ya existe."
+                  return 0
+                fi
+
+                echo "ERROR: La operación SQL++ falló."
+                cat "${response_file}" 2>/dev/null || true
+                exit 1
               }
 
-              run_index "CREATE PRIMARY INDEX ON \`flight-reservations\`.\`reservations\`.\`processed\`"
-              run_index "CREATE INDEX idx_reservationId ON \`flight-reservations\`.\`reservations\`.\`processed\`(reservationId)"
-              run_index "CREATE INDEX idx_flightNumber ON \`flight-reservations\`.\`reservations\`.\`processed\`(flightNumber)"
-              run_index "CREATE INDEX idx_passengerId ON \`flight-reservations\`.\`reservations\`.\`processed\`(passengerId)"
-              run_index "CREATE INDEX idx_origin_destination ON \`flight-reservations\`.\`reservations\`.\`processed\`(origin, destination)"
-              run_index "CREATE INDEX idx_status ON \`flight-reservations\`.\`reservations\`.\`processed\`(status)"
-              run_index "CREATE INDEX idx_flightCount ON \`flight-reservations\`.\`reservations\`.\`processed\`(flightCount)"
+              # 5. Crear los siete índices
+              echo ""
+              echo "Creando los índices..."
 
-              echo "Todos los índices procesados correctamente."
+              run_index \
+                "CREATE PRIMARY INDEX IF NOT EXISTS ON ${KEYSPACE}"
+
+              run_index \
+                "CREATE INDEX idx_reservationId IF NOT EXISTS ON ${KEYSPACE}(reservationId)"
+
+              run_index \
+                "CREATE INDEX idx_flightNumber IF NOT EXISTS ON ${KEYSPACE}(flightNumber)"
+
+              run_index \
+                "CREATE INDEX idx_passengerId IF NOT EXISTS ON ${KEYSPACE}(passengerId)"
+
+              run_index \
+                "CREATE INDEX idx_origin_destination IF NOT EXISTS ON ${KEYSPACE}(origin, destination)"
+
+              run_index \
+                "CREATE INDEX idx_status IF NOT EXISTS ON ${KEYSPACE}(status)"
+
+              run_index \
+                "CREATE INDEX idx_flightCount IF NOT EXISTS ON ${KEYSPACE}(flightCount)"
+
+              # 6. Verificar el estado real de los siete índices
+              echo ""
+              echo "Esperando a que los siete índices estén ONLINE..."
+
+              INDEXES_READY=false
+
+              VALIDATION_QUERY="SELECT CASE WHEN COUNT(*) = 7 AND SUM(CASE WHEN state = 'online' THEN 1 ELSE 0 END) = 7 AND SUM(CASE WHEN is_primary = true THEN 1 ELSE 0 END) = 1 THEN 'READY' ELSE 'WAIT' END AS validation FROM system:indexes WHERE keyspace_id = 'processed' AND bucket_id = 'flight-reservations' AND scope_id = 'reservations'"
+
+              VALIDATION_PAYLOAD="{\"statement\":\"${VALIDATION_QUERY}\"}"
+
+              for i in $(seq 1 60); do
+                HTTP_CODE=$(curl -sS \
+                  --connect-timeout 5 \
+                  --max-time 30 \
+                  -u "${CB_USER}:${COUCHBASE_PASSWORD}" \
+                  -H "Content-Type: application/json" \
+                  --data "${VALIDATION_PAYLOAD}" \
+                  -o /tmp/index-status.json \
+                  -w "%{http_code}" \
+                  "${CB_QUERY}/query/service" 2>/dev/null || true)
+
+                if [ "${HTTP_CODE}" = "200" ] &&
+                   grep -Eq '"status"[[:space:]]*:[[:space:]]*"success"' \
+                     /tmp/index-status.json 2>/dev/null; then
+
+                  if grep -Eq '"validation"[[:space:]]*:[[:space:]]*"READY"' \
+                      /tmp/index-status.json; then
+                    INDEXES_READY=true
+                    echo "OK: Los siete índices están ONLINE."
+                    cat /tmp/index-status.json
+                    break
+                  fi
+                else
+                  echo "Intento ${i}/60: no se pudo consultar el estado."
+                  cat /tmp/index-status.json 2>/dev/null || true
+                fi
+
+                if [ "${INDEXES_READY}" != "true" ]; then
+                  echo "Intento ${i}/60: índices todavía no confirmados."
+                  sleep 5
+                fi
+              done
+
+              if [ "${INDEXES_READY}" != "true" ]; then
+                echo ""
+                echo "ERROR: No se confirmó que los siete índices estén ONLINE."
+                echo "Última respuesta de Couchbase:"
+                cat /tmp/index-status.json 2>/dev/null || true
+                exit 1
+              fi
+
+              # 7. Finalización
+              echo ""
+              echo "=========================================="
+              echo " Inicialización de índices finalizada."
+              echo "=========================================="
+
           env:
             - name: COUCHBASE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: couchbase-auth
                   key: password
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

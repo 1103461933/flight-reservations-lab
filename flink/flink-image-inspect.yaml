@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: flink-image-inspect
+  namespace: stratos-rnd-dev
+spec:
+  restartPolicy: Never
+  containers:
+    - name: inspect
+      image: xlen911/flink-azure:1.19.3
+      command: ["sh", "-c", "sleep 3600"]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 250m
+          memory: 256Mi

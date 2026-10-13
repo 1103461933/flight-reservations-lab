@@ -1,8 +1,13 @@
 FROM alpine:3.19
 
-RUN apk add --no-cache jq curl bash
+RUN apk add --no-cache \
+    jq \
+    curl \
+    bash \
+    coreutils
 
-COPY validate.sh /validate.sh
-RUN chmod +x /validate.sh
+COPY validator.sh /validate.sh
+
+RUN chmod 755 /validate.sh
 
 ENTRYPOINT ["/validate.sh"]
