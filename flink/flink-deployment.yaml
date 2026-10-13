@@ -5,7 +5,7 @@ metadata:
   namespace: stratos-rnd-dev
 
 spec:
-  image: xlen911/flink-azure:1.19.3-wi-test2
+  image: xlen911/flink-azure:1.0.2
   flinkVersion: v1_19
   mode: standalone
   serviceAccount: flink
