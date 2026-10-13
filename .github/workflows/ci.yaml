@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag de imagen, por ejemplo 1.0.1"
+        description: "Image tag (e.g. 1.0.1)"
         required: true
         default: "1.0.1"
         type: string
@@ -13,29 +13,30 @@ permissions:
   contents: read
 
 jobs:
+  # --------------------------------------------------
+  # 1. Validate input tag
+  # --------------------------------------------------
   validate-tag:
     name: Validate image tag
     runs-on: ubuntu-latest
 
-    outputs:
-      tag: ${{ steps.validate.outputs.tag }}
-
     steps:
       - name: Validate tag format
-        id: validate
         env:
           IMAGE_TAG: ${{ inputs.tag }}
-        shell: bash
         run: |
           set -euo pipefail
 
-          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo "ERROR: Invalid Docker image tag."
+          if [[ ! "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "ERROR: Invalid Docker image tag: $IMAGE_TAG"
             exit 1
           fi
 
-          echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Image tag validated: $IMAGE_TAG"
 
+  # --------------------------------------------------
+  # 2. Build and push Flink image
+  # --------------------------------------------------
   build-flink:
     name: Build Flink image
     needs: validate-tag
@@ -46,6 +47,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate Flink Dockerfile
+        run: |
+          set -euo pipefail
+
+          test -f application/flink/Dockerfile
+          test -f application/flink/requirements.txt
+          test -f application/flink/src/flight_reservations.py
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -55,12 +67,16 @@ jobs:
       - name: Build and push Flink image
         uses: docker/build-push-action@v6
         with:
-          context: application/flink
+          context: ./application/flink
+          file: ./application/flink/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/flink-flight-reservations:${{ needs.validate-tag.outputs.tag }}
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/flink-azure:${{ inputs.tag }}
 
+  # --------------------------------------------------
+  # 3. Build and push producer image
+  # --------------------------------------------------
   build-producer:
-    name: Build producer image
+    name: Build Producer image
     needs: validate-tag
     runs-on: ubuntu-latest
     environment: dev
@@ -69,21 +85,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate Producer Dockerfile
+        run: |
+          set -euo pipefail
+
+          test -f application/producer/Dockerfile
+          test -f application/producer/requirements.txt
+          test -f application/producer/src/producer.py
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push producer image
+      - name: Build and push Producer image
         uses: docker/build-push-action@v6
         with:
-          context: application/producer
+          context: ./application/producer
+          file: ./application/producer/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/flight-reservation-producer:${{ needs.validate-tag.outputs.tag }}
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/flight-reservation-producer:${{ inputs.tag }}
 
+  # --------------------------------------------------
+  # 4. Build and push validator image
+  # --------------------------------------------------
   build-validator:
-    name: Build validator image
+    name: Build Validator image
     needs: validate-tag
     runs-on: ubuntu-latest
     environment: dev
@@ -92,23 +123,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate Validator Dockerfile
+        run: |
+          set -euo pipefail
+
+          test -f application/validator/Dockerfile
+          test -f application/validator/validator.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push validator image
+      - name: Build and push Validator image
         uses: docker/build-push-action@v6
         with:
-          context: application/validator
+          context: ./application/validator
+          file: ./application/validator/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ needs.validate-tag.outputs.tag }}
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ inputs.tag }}
 
+  # --------------------------------------------------
+  # 5. Update Kubernetes and Argo Workflows manifests
+  # --------------------------------------------------
   update-manifests:
-    name: Update deployment manifests
+    name: Update image tags in manifests
     needs:
-      - validate-tag
       - build-flink
       - build-producer
       - build-validator
@@ -122,12 +166,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update image tags
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          IMAGE_TAG: ${{ needs.validate-tag.outputs.tag }}
-        shell: bash
+          IMAGE_TAG: ${{ inputs.tag }}
+
         run: |
           set -euo pipefail
 
@@ -140,29 +186,32 @@ jobs:
           username = os.environ["DOCKERHUB_USERNAME"]
           tag = os.environ["IMAGE_TAG"]
 
-          images = {
-              "flink/flink-deployment.yaml": "flink-flight-reservations",
+          manifests = {
+              "flink/flink-deployment.yaml": (
+                  "flink-azure",
+              ),
               "argo-workflows/integration-test-workflow-template.yaml": (
                   "flight-reservation-producer",
                   "flight-reservations-validator",
               ),
           }
 
-          for filename, expected_images in images.items():
+          for filename, expected_images in manifests.items():
               path = Path(filename)
 
               if not path.is_file():
-                  sys.exit(f"ERROR: Manifest not found: {filename}")
+                  sys.exit(
+                      f"ERROR: Manifest not found: {filename}"
+                  )
 
-              if isinstance(expected_images, str):
-                  expected_images = (expected_images,)
-
-              lines = path.read_text(encoding="utf-8").splitlines(
-                  keepends=True
-              )
+              text = path.read_text(encoding="utf-8")
+              lines = text.splitlines(keepends=True)
 
               updated_lines = []
-              counts = {image: 0 for image in expected_images}
+              counts = {
+                  image_name: 0
+                  for image_name in expected_images
+              }
 
               for line in lines:
                   updated = line
@@ -171,14 +220,20 @@ jobs:
                       for image_name in expected_images:
                           pattern = (
                               r"(^\s*image\s*:\s*)"
-                              r"(?:[^\s/]+/)?"
+                              r"(?:\S*/)?"
                               + re.escape(image_name)
                               + r":[^\s#]+"
                           )
 
+                          def replace_image(match):
+                              return (
+                                  match.group(1)
+                                  + f"{username}/{image_name}:{tag}"
+                              )
+
                           updated, count = re.subn(
                               pattern,
-                              rf"\g<1>{username}/{image_name}:{tag}",
+                              replace_image,
                               updated,
                           )
 
@@ -186,12 +241,18 @@ jobs:
 
                   updated_lines.append(updated)
 
-              for image_name, count in counts.items():
-                  if count == 0:
-                      sys.exit(
-                          f"ERROR: No image reference found for "
-                          f"{image_name} in {filename}"
-                      )
+              missing = [
+                  image_name
+                  for image_name, count in counts.items()
+                  if count == 0
+              ]
+
+              if missing:
+                  sys.exit(
+                      f"ERROR: No image reference found for "
+                      f"{missing} in {filename}. "
+                      "Check the manifest image names."
+                  )
 
               path.write_text(
                   "".join(updated_lines),
@@ -199,27 +260,37 @@ jobs:
               )
 
               print(f"Updated {filename}: {counts}")
+
           PY
 
-      - name: Commit and push manifest changes
-        env:
-          IMAGE_TAG: ${{ needs.validate-tag.outputs.tag }}
-        shell: bash
+      - name: Review manifest changes
         run: |
           set -euo pipefail
 
+          git diff --check
+          git diff -- flink/flink-deployment.yaml
+          git diff -- argo-workflows/integration-test-workflow-template.yaml
+
+      - name: Commit and push manifest changes
+        env:
+          IMAGE_TAG: ${{ inputs.tag }}
+
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- \
+            flink/flink-deployment.yaml \
+            argo-workflows/integration-test-workflow-template.yaml; then
+            echo "No manifest changes required."
+            exit 0
+          fi
+
           git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
             flink/flink-deployment.yaml \
             argo-workflows/integration-test-workflow-template.yaml
-
-          if git diff --cached --quiet; then
-            echo "No manifest changes required."
-            exit 0
-          fi
 
           git commit -m "chore: update image tags to ${IMAGE_TAG}"
           git push
