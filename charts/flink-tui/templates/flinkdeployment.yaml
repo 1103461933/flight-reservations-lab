@@ -38,6 +38,7 @@ spec:
     state.savepoints.dir: {{ printf "abfss://%s@%s.dfs.core.windows.net/%s" .Values.azure.savepointContainer .Values.azure.storageAccount .Values.azure.savepointPath | quote }}
     taskmanager.state.local.root-dirs: /pv/localState
     process.taskmanager.working-dir: /pv
+    env.java.opts: "--add-opens=java.base/java.util=ALL-UNNAMED"
   podTemplate:
     metadata:
       labels:
