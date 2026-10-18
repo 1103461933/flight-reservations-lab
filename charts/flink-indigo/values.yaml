@@ -1,0 +1,79 @@
+tenant:
+  id: indigo
+  sharedNamespace: stratos-rnd-dev
+
+flink:
+  deploymentName: flight-reservation-indigo
+  jobName: "Flight Reservation Processor - Indigo"
+  flinkVersion: v1_19
+
+  image:
+    repository: xlen911/flink-azure
+    tag: "1.19.3-pyflink-tenants-1"
+    pullPolicy: Always
+
+  serviceAccount: flight-reservation-indigo
+  taskSlots: 1
+  parallelism: 2
+
+  jobState: suspended
+  initialSavepointPath: ""
+
+  checkpoint:
+    interval: "30 s"
+    maxRetained: 5
+    minPause: "5 s"
+    timeout: "5 min"
+
+  jobManager:
+    cpu: 0.5
+    memory: "1024m"
+
+  taskManager:
+    replicas: 2
+    cpu: 0.5
+    memory: "1024m"
+    storageClassName: managed-csi
+    storageSize: 10Gi
+
+azure:
+  clientId: "412807b1-7a92-430d-907f-da1bc2e297e2"
+  tenantId: "05af5f27-094d-4dae-b66c-15bdf9d40aa3"
+
+  storageAccount: flinkstorage911
+
+  checkpointContainer: flink-checkpoints-indigo
+  checkpointPath: indigo/checkpoints
+
+  savepointContainer: flink-savepoints-indigo
+  savepointPath: indigo/savepoints
+
+  haContainer: flink-ha-indigo
+  haPath: indigo/ha
+
+kafka:
+  clusterName: flight-kafka
+  bootstrapServers: "flight-kafka-kafka-bootstrap.stratos-rnd-dev.svc.cluster.local:9092"
+
+  topic: flight-reservations
+  groupId: flink-reservation-group
+
+  createTopic: false
+  partitions: 3
+  replicas: 1
+
+  retentionMs: "604800000"
+  segmentBytes: "1073741824"
+
+couchbase:
+  connectionString: "couchbase://flight-couchbase-srv.stratos-rnd-dev.svc.cluster.local"
+
+  secretName: couchbase-auth
+
+  bucketName: flight-reservations
+  scopeName: reservations
+  collectionName: processed
+  bookingsCollectionName: bookings
+
+  createResources: false
+  memoryQuota: 256Mi

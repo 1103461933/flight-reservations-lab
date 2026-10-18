@@ -1,59 +1,95 @@
 apiVersion: flink.apache.org/v1beta1
 kind: FlinkDeployment
+
 metadata:
   name: flight-reservation-processor
   namespace: stratos-rnd-dev
 
 spec:
-  image: xlen911/flink-azure:1.19.3-wi-test2
-  flinkVersion: v1_19
+  # Mantener el modo actual del cluster.
+  # No agregar un bloque spec.job.
   mode: standalone
-  serviceAccount: flink
+
+  flinkVersion: v1_19
+
+  # Imagen actual.
+  # Se actualizará después de construir y publicar test7.
+  image: xlen911/flink-azure:1.19.3-pyflink-test8
   imagePullPolicy: Always
 
+  # Service account utilizada por Azure Workload Identity.
+  serviceAccount: flink
+
+  # Configuración de Flink y almacenamiento externo.
+  flinkConfiguration:
+    # Checkpoints.
+    execution.checkpointing.interval: "30 s"
+    execution.checkpointing.max-retained-checkpoints: "5"
+    execution.checkpointing.min-pause: "5 s"
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.timeout: "5 min"
+
+    # Azure Data Lake Storage Gen2: autenticación OAuth.
+    fs.azure.account.auth.type.flinkstorage911.dfs.core.windows.net: OAuth
+
+    fs.azure.account.oauth.provider.type.flinkstorage911.dfs.core.windows.net: org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider
+
+    fs.azure.account.oauth2.client.id.flinkstorage911.dfs.core.windows.net: "${env.AZURE_CLIENT_ID}"
+
+    fs.azure.account.oauth2.msi.tenant.flinkstorage911.dfs.core.windows.net: "${env.AZURE_TENANT_ID}"
+
+    fs.azure.account.oauth2.token.file.flinkstorage911.dfs.core.windows.net: "${env.AZURE_FEDERATED_TOKEN_FILE}"
+
+    # Alta disponibilidad.
+    high-availability.type: kubernetes
+    high-availability.storageDir: abfss://flink-ha@flinkstorage911.dfs.core.windows.net/ha
+
+    # Backend y recuperación del estado.
+    state.backend.type: rocksdb
+    state.backend.incremental: "true"
+    state.backend.local-recovery: "true"
+
+    # Checkpoints y savepoints externos.
+    state.checkpoints.dir: abfss://flink-checkpoints@flinkstorage911.dfs.core.windows.net/checkpoints
+    state.savepoints.dir: abfss://flink-savepoints@flinkstorage911.dfs.core.windows.net/savepoints
+
+    # Directorio local del estado en los TaskManagers.
+    taskmanager.state.local.root-dirs: /pv/localState
+
+  # Plantilla global para los pods de Flink.
+  # Conserva la etiqueta de Azure Workload Identity.
   podTemplate:
     metadata:
       labels:
         azure.workload.identity/use: "true"
 
-  flinkConfiguration:
-    # Checkpoint configuration
-    execution.checkpointing.interval: "30 s"
-    execution.checkpointing.mode: EXACTLY_ONCE
-    execution.checkpointing.timeout: "5 min"
-    execution.checkpointing.min-pause: "5 s"
-    execution.checkpointing.max-retained-checkpoints: "5"
-
-    # State backend
-    state.backend.type: rocksdb
-    state.backend.incremental: "true"
-    state.backend.local-recovery: "true"
-
-    # Azure Blob Storage authentication - Workload Identity
-    fs.azure.account.auth.type.flinkstorage911.dfs.core.windows.net: OAuth
-    fs.azure.account.oauth.provider.type.flinkstorage911.dfs.core.windows.net: org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider
-    fs.azure.account.oauth2.client.id.flinkstorage911.dfs.core.windows.net: "${env.AZURE_CLIENT_ID}"
-    fs.azure.account.oauth2.msi.tenant.flinkstorage911.dfs.core.windows.net: "${env.AZURE_TENANT_ID}"
-    fs.azure.account.oauth2.token.file.flinkstorage911.dfs.core.windows.net: "${env.AZURE_FEDERATED_TOKEN_FILE}"
-
-    # Azure Blob Storage: checkpoints
-    state.checkpoints.dir: "abfss://flink-checkpoints@flinkstorage911.dfs.core.windows.net/checkpoints"
-
-    # Azure Blob Storage: savepoints
-    state.savepoints.dir: "abfss://flink-savepoints@flinkstorage911.dfs.core.windows.net/savepoints"
-
-    # High availability
-    high-availability.type: kubernetes
-    high-availability.storageDir: "abfss://flink-ha@flinkstorage911.dfs.core.windows.net/ha"
-
-    # Local TaskManager state
-    taskmanager.state.local.root-dirs: "/pv/localState"
-
+  # Configuración del JobManager.
   jobManager:
+    replicas: 1
+
     resource:
       cpu: 0.5
       memory: "1024m"
 
+    # Credenciales de Couchbase para el JobManager.
+    podTemplate:
+      spec:
+        containers:
+          - name: flink-main-container
+            env:
+              - name: COUCHBASE_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: couchbase-auth
+                    key: username
+
+              - name: COUCHBASE_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: couchbase-auth
+                    key: password
+
+  # Configuración de los TaskManagers.
   taskManager:
     replicas: 2
 
@@ -65,11 +101,34 @@ spec:
       metadata:
         labels:
           azure.workload.identity/use: "true"
+
       spec:
-        # Allow the Flink process (UID/GID 9999) to access the volume
         securityContext:
           fsGroup: 9999
 
+        containers:
+          - name: flink-main-container
+
+            # Credenciales de Couchbase para los TaskManagers.
+            env:
+              - name: COUCHBASE_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: couchbase-auth
+                    key: username
+
+              - name: COUCHBASE_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: couchbase-auth
+                    key: password
+
+            # Conservar el almacenamiento local existente.
+            volumeMounts:
+              - name: taskmanager-storage
+                mountPath: /pv
+
+        # PVC efímero para el almacenamiento local de cada TaskManager.
         volumes:
           - name: taskmanager-storage
             ephemeral:
@@ -77,13 +136,9 @@ spec:
                 spec:
                   accessModes:
                     - ReadWriteOnce
+
                   storageClassName: managed-csi
+
                   resources:
                     requests:
                       storage: 20Gi
-
-        containers:
-          - name: flink-main-container
-            volumeMounts:
-              - name: taskmanager-storage
-                mountPath: /pv

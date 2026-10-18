@@ -1,0 +1,5 @@
+{
+  "spec": {
+    "image": "xlen911/flink-azure:1.19.3-pyflink-test5"
+  }
+}

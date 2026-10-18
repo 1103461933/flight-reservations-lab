@@ -1,0 +1,17 @@
+﻿apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: installation-test-
+  namespace: argo
+spec:
+  serviceAccountName: argo
+  entrypoint: hello
+  templates:
+    - name: hello
+      container:
+        image: busybox:1.36
+        command:
+          - sh
+          - -c
+        args:
+          - echo "Argo Workflows is working correctly"

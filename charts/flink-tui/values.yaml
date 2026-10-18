@@ -1,0 +1,79 @@
+tenant:
+  id: tui
+  sharedNamespace: stratos-rnd-dev
+
+flink:
+  deploymentName: flight-reservation-tui
+  jobName: "Flight Reservation Processor - TUI"
+  flinkVersion: v1_19
+
+  image:
+    repository: xlen911/flink-azure
+    tag: "1.19.3-pyflink-tenants-1"
+    pullPolicy: Always
+
+  serviceAccount: flight-reservation-tui
+  taskSlots: 1
+  parallelism: 2
+
+  jobState: running
+  initialSavepointPath: ""
+
+  checkpoint:
+    interval: "30 s"
+    maxRetained: 5
+    minPause: "5 s"
+    timeout: "5 min"
+
+  jobManager:
+    cpu: 0.5
+    memory: "1024m"
+
+  taskManager:
+    replicas: 2
+    cpu: 0.5
+    memory: "1024m"
+    storageClassName: managed-csi
+    storageSize: 10Gi
+
+azure:
+  clientId: "5f5f9e5e-11e8-4442-8488-7846e88d12a1"
+  tenantId: "05af5f27-094d-4dae-b66c-15bdf9d40aa3"
+
+  storageAccount: flinkstorage911
+
+  checkpointContainer: flink-checkpoints-tui
+  checkpointPath: tui/checkpoints
+
+  savepointContainer: flink-savepoints-tui
+  savepointPath: tui/savepoints
+
+  haContainer: flink-ha-tui
+  haPath: tui/ha
+
+kafka:
+  clusterName: flight-kafka
+  bootstrapServers: "flight-kafka-kafka-bootstrap.stratos-rnd-dev.svc.cluster.local:9092"
+
+  topic: flight-reservations-tui
+  groupId: flink-reservation-tui
+
+  createTopic: true
+  partitions: 3
+  replicas: 1
+
+  retentionMs: "604800000"
+  segmentBytes: "1073741824"
+
+couchbase:
+  connectionString: "couchbase://flight-couchbase-srv.stratos-rnd-dev.svc.cluster.local"
+
+  secretName: couchbase-auth
+
+  bucketName: flight-reservations-tui
+  scopeName: reservations-tui
+  collectionName: processed-tui
+  bookingsCollectionName: bookings-tui
+
+  createResources: true
+  memoryQuota: 256Mi

@@ -1,0 +1,158 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: {{ .Values.flink.deploymentName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.flink.deploymentName }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: flight-reservations
+    tenant: {{ .Values.tenant.id }}
+spec:
+  # Application deployment is selected by spec.job below.
+  # standalone is the Kubernetes deployment mode, not Session Mode.
+  mode: standalone
+  flinkVersion: {{ .Values.flink.flinkVersion }}
+  image: {{ printf "%s:%s" .Values.flink.image.repository .Values.flink.image.tag | quote }}
+  imagePullPolicy: {{ .Values.flink.image.pullPolicy }}
+  serviceAccount: {{ .Values.flink.serviceAccount }}
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: {{ .Values.flink.taskSlots | quote }}
+    parallelism.default: {{ .Values.flink.parallelism | quote }}
+    execution.checkpointing.interval: {{ .Values.flink.checkpoint.interval | quote }}
+    execution.checkpointing.max-retained-checkpoints: {{ .Values.flink.checkpoint.maxRetained | quote }}
+    execution.checkpointing.min-pause: {{ .Values.flink.checkpoint.minPause | quote }}
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.timeout: {{ .Values.flink.checkpoint.timeout | quote }}
+    fs.azure.account.auth.type.{{ .Values.azure.storageAccount }}.dfs.core.windows.net: OAuth
+    fs.azure.account.oauth.provider.type.{{ .Values.azure.storageAccount }}.dfs.core.windows.net: org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider
+    fs.azure.account.oauth2.client.id.{{ .Values.azure.storageAccount }}.dfs.core.windows.net: "${env.AZURE_CLIENT_ID}"
+    fs.azure.account.oauth2.msi.tenant.{{ .Values.azure.storageAccount }}.dfs.core.windows.net: "${env.AZURE_TENANT_ID}"
+    fs.azure.account.oauth2.token.file.{{ .Values.azure.storageAccount }}.dfs.core.windows.net: "${env.AZURE_FEDERATED_TOKEN_FILE}"
+    high-availability.type: kubernetes
+    high-availability.storageDir: {{ printf "abfss://%s@%s.dfs.core.windows.net/%s" .Values.azure.haContainer .Values.azure.storageAccount .Values.azure.haPath | quote }}
+    state.backend.type: rocksdb
+    state.backend.incremental: "true"
+    state.backend.local-recovery: "true"
+    state.checkpoints.dir: {{ printf "abfss://%s@%s.dfs.core.windows.net/%s" .Values.azure.checkpointContainer .Values.azure.storageAccount .Values.azure.checkpointPath | quote }}
+    state.savepoints.dir: {{ printf "abfss://%s@%s.dfs.core.windows.net/%s" .Values.azure.savepointContainer .Values.azure.storageAccount .Values.azure.savepointPath | quote }}
+    taskmanager.state.local.root-dirs: /pv/localState
+    process.taskmanager.working-dir: /pv
+  podTemplate:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+        tenant: {{ .Values.tenant.id }}
+  jobManager:
+    replicas: 1
+    resource:
+      cpu: {{ .Values.flink.jobManager.cpu }}
+      memory: {{ .Values.flink.jobManager.memory | quote }}
+    podTemplate:
+      metadata:
+        labels:
+          azure.workload.identity/use: "true"
+          tenant: {{ .Values.tenant.id }}
+      spec:
+        containers:
+          - name: flink-main-container
+            env:
+              - name: FLINK_JOB_NAME
+                value: {{ .Values.flink.jobName | quote }}
+              - name: KAFKA_BOOTSTRAP
+                value: {{ .Values.kafka.bootstrapServers | quote }}
+              - name: KAFKA_TOPIC
+                value: {{ .Values.kafka.topic | quote }}
+              - name: KAFKA_GROUP
+                value: {{ .Values.kafka.groupId | quote }}
+              - name: COUCHBASE_CONNECTION
+                value: {{ .Values.couchbase.connectionString | quote }}
+              - name: COUCHBASE_BUCKET
+                value: {{ .Values.couchbase.bucketName | quote }}
+              - name: COUCHBASE_SCOPE
+                value: {{ .Values.couchbase.scopeName | quote }}
+              - name: COUCHBASE_COLLECTION
+                value: {{ .Values.couchbase.collectionName | quote }}
+              - name: COUCHBASE_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Values.couchbase.secretName }}
+                    key: username
+              - name: COUCHBASE_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Values.couchbase.secretName }}
+                    key: password
+  taskManager:
+    replicas: {{ .Values.flink.taskManager.replicas }}
+    resource:
+      cpu: {{ .Values.flink.taskManager.cpu }}
+      memory: {{ .Values.flink.taskManager.memory | quote }}
+    podTemplate:
+      metadata:
+        labels:
+          azure.workload.identity/use: "true"
+          tenant: {{ .Values.tenant.id }}
+      spec:
+        securityContext:
+          fsGroup: 9999
+        containers:
+          - name: flink-main-container
+            env:
+              - name: FLINK_JOB_NAME
+                value: {{ .Values.flink.jobName | quote }}
+              - name: KAFKA_BOOTSTRAP
+                value: {{ .Values.kafka.bootstrapServers | quote }}
+              - name: KAFKA_TOPIC
+                value: {{ .Values.kafka.topic | quote }}
+              - name: KAFKA_GROUP
+                value: {{ .Values.kafka.groupId | quote }}
+              - name: COUCHBASE_CONNECTION
+                value: {{ .Values.couchbase.connectionString | quote }}
+              - name: COUCHBASE_BUCKET
+                value: {{ .Values.couchbase.bucketName | quote }}
+              - name: COUCHBASE_SCOPE
+                value: {{ .Values.couchbase.scopeName | quote }}
+              - name: COUCHBASE_COLLECTION
+                value: {{ .Values.couchbase.collectionName | quote }}
+              - name: COUCHBASE_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Values.couchbase.secretName }}
+                    key: username
+              - name: COUCHBASE_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Values.couchbase.secretName }}
+                    key: password
+            volumeMounts:
+              - name: taskmanager-storage
+                mountPath: /pv
+        volumes:
+          - name: taskmanager-storage
+            ephemeral:
+              volumeClaimTemplate:
+                metadata:
+                  labels:
+                    tenant: {{ .Values.tenant.id }}
+                spec:
+                  accessModes:
+                    - ReadWriteOnce
+                  storageClassName: {{ .Values.flink.taskManager.storageClassName }}
+                  resources:
+                    requests:
+                      storage: {{ .Values.flink.taskManager.storageSize }}
+  job:
+    jarURI: local:///opt/flink/lib/flink-python-1.19.3.jar
+    entryClass: org.apache.flink.client.python.PythonDriver
+    args:
+      - "-pyclientexec"
+      - "/usr/bin/python3"
+      - "-py"
+      - "/opt/flink/usrlib/flight_reservations.py"
+    parallelism: {{ .Values.flink.parallelism }}
+    upgradeMode: savepoint
+    state: {{ .Values.flink.jobState }}
+{{- if .Values.flink.initialSavepointPath }}
+    initialSavepointPath: {{ .Values.flink.initialSavepointPath | quote }}
+{{- end }}

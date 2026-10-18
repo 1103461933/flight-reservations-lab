@@ -1,0 +1,102 @@
+﻿apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"flink.apache.org/v1beta1","kind":"FlinkDeployment","metadata":{"annotations":{},"name":"flight-reservation-processor","namespace":"stratos-rnd-dev"},"spec":{"flinkConfiguration":{"execution.checkpointing.interval":"30 s","execution.checkpointing.max-retained-checkpoints":"5","execution.checkpointing.min-pause":"5 s","execution.checkpointing.mode":"EXACTLY_ONCE","execution.checkpointing.timeout":"5 min","fs.azure.account.auth.type.flinkstorage911.dfs.core.windows.net":"OAuth","fs.azure.account.oauth.provider.type.flinkstorage911.dfs.core.windows.net":"org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider","fs.azure.account.oauth2.client.id.flinkstorage911.dfs.core.windows.net":"${env.AZURE_CLIENT_ID}","fs.azure.account.oauth2.msi.tenant.flinkstorage911.dfs.core.windows.net":"${env.AZURE_TENANT_ID}","fs.azure.account.oauth2.token.file.flinkstorage911.dfs.core.windows.net":"${env.AZURE_FEDERATED_TOKEN_FILE}","high-availability.storageDir":"abfss://flink-ha@flinkstorage911.dfs.core.windows.net/ha","high-availability.type":"kubernetes","state.backend.incremental":"true","state.backend.local-recovery":"true","state.backend.type":"rocksdb","state.checkpoints.dir":"abfss://flink-checkpoints@flinkstorage911.dfs.core.windows.net/checkpoints","state.savepoints.dir":"abfss://flink-savepoints@flinkstorage911.dfs.core.windows.net/savepoints","taskmanager.state.local.root-dirs":"/pv/localState"},"flinkVersion":"v1_19","image":"xlen911/flink-azure:1.19.3-wi-test2","imagePullPolicy":"Always","jobManager":{"resource":{"cpu":0.5,"memory":"1024m"}},"mode":"standalone","podTemplate":{"metadata":{"labels":{"azure.workload.identity/use":"true"}}},"serviceAccount":"flink","taskManager":{"podTemplate":{"metadata":{"labels":{"azure.workload.identity/use":"true"}},"spec":{"containers":[{"name":"flink-main-container","volumeMounts":[{"mountPath":"/pv","name":"taskmanager-storage"}]}],"securityContext":{"fsGroup":9999},"volumes":[{"ephemeral":{"volumeClaimTemplate":{"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"20Gi"}},"storageClassName":"managed-csi"}}},"name":"taskmanager-storage"}]}},"replicas":2,"resource":{"cpu":0.5,"memory":"1024m"}}}}
+  creationTimestamp: "2026-10-13T02:08:48Z"
+  finalizers:
+  - flinkdeployments.flink.apache.org/finalizer
+  generation: 2
+  name: flight-reservation-processor
+  namespace: stratos-rnd-dev
+  resourceVersion: "629956"
+  uid: 211db6d1-cd08-4430-a864-d2fce3391d13
+spec:
+  flinkConfiguration:
+    execution.checkpointing.interval: 30 s
+    execution.checkpointing.max-retained-checkpoints: "5"
+    execution.checkpointing.min-pause: 5 s
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.timeout: 5 min
+    fs.azure.account.auth.type.flinkstorage911.dfs.core.windows.net: OAuth
+    fs.azure.account.oauth.provider.type.flinkstorage911.dfs.core.windows.net: org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider
+    fs.azure.account.oauth2.client.id.flinkstorage911.dfs.core.windows.net: ${env.AZURE_CLIENT_ID}
+    fs.azure.account.oauth2.msi.tenant.flinkstorage911.dfs.core.windows.net: ${env.AZURE_TENANT_ID}
+    fs.azure.account.oauth2.token.file.flinkstorage911.dfs.core.windows.net: ${env.AZURE_FEDERATED_TOKEN_FILE}
+    high-availability.storageDir: abfss://flink-ha@flinkstorage911.dfs.core.windows.net/ha
+    high-availability.type: kubernetes
+    state.backend.incremental: "true"
+    state.backend.local-recovery: "true"
+    state.backend.type: rocksdb
+    state.checkpoints.dir: abfss://flink-checkpoints@flinkstorage911.dfs.core.windows.net/checkpoints
+    state.savepoints.dir: abfss://flink-savepoints@flinkstorage911.dfs.core.windows.net/savepoints
+    taskmanager.state.local.root-dirs: /pv/localState
+  flinkVersion: v1_19
+  image: xlen911/flink-azure:1.19.3-wi-test2
+  imagePullPolicy: Always
+  jobManager:
+    replicas: 1
+    resource:
+      cpu: 0.5
+      memory: 1024m
+  mode: standalone
+  podTemplate:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+  serviceAccount: flink
+  taskManager:
+    podTemplate:
+      metadata:
+        labels:
+          azure.workload.identity/use: "true"
+      spec:
+        containers:
+        - name: flink-main-container
+          volumeMounts:
+          - mountPath: /pv
+            name: taskmanager-storage
+        securityContext:
+          fsGroup: 9999
+        volumes:
+        - ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 20Gi
+                storageClassName: managed-csi
+          name: taskmanager-storage
+    replicas: 2
+    resource:
+      cpu: 0.5
+      memory: 1024m
+status:
+  clusterInfo:
+    flink-revision: 4105f8d @ 2025-06-12T18:34:28+02:00
+    flink-version: 1.19.3
+    total-cpu: "1.5"
+    total-memory: "3221225472"
+  jobManagerDeploymentStatus: READY
+  jobStatus:
+    checkpointInfo:
+      lastPeriodicCheckpointTimestamp: 0
+    savepointInfo:
+      lastPeriodicSavepointTimestamp: 0
+      savepointHistory: []
+  lifecycleState: STABLE
+  observedGeneration: 2
+  reconciliationStatus:
+    lastReconciledSpec: '{"spec":{"job":null,"restartNonce":null,"flinkConfiguration":{"execution.checkpointing.interval":"30
+      s","execution.checkpointing.max-retained-checkpoints":"5","execution.checkpointing.min-pause":"5
+      s","execution.checkpointing.mode":"EXACTLY_ONCE","execution.checkpointing.timeout":"5
+      min","fs.azure.account.auth.type.flinkstorage911.dfs.core.windows.net":"OAuth","fs.azure.account.oauth.provider.type.flinkstorage911.dfs.core.windows.net":"org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider","fs.azure.account.oauth2.client.id.flinkstorage911.dfs.core.windows.net":"${env.AZURE_CLIENT_ID}","fs.azure.account.oauth2.msi.tenant.flinkstorage911.dfs.core.windows.net":"${env.AZURE_TENANT_ID}","fs.azure.account.oauth2.token.file.flinkstorage911.dfs.core.windows.net":"${env.AZURE_FEDERATED_TOKEN_FILE}","high-availability.storageDir":"abfss://flink-ha@flinkstorage911.dfs.core.windows.net/ha","high-availability.type":"kubernetes","state.backend.incremental":"true","state.backend.local-recovery":"true","state.backend.type":"rocksdb","state.checkpoints.dir":"abfss://flink-checkpoints@flinkstorage911.dfs.core.windows.net/checkpoints","state.savepoints.dir":"abfss://flink-savepoints@flinkstorage911.dfs.core.windows.net/savepoints","taskmanager.state.local.root-dirs":"/pv/localState"},"image":"xlen911/flink-azure:1.19.3-wi-test2","imagePullPolicy":"Always","serviceAccount":"flink","flinkVersion":"v1_19","ingress":null,"podTemplate":{"metadata":{"labels":{"azure.workload.identity/use":"true"}}},"jobManager":{"resource":{"cpu":0.5,"memory":"1024m","ephemeralStorage":null},"replicas":1,"podTemplate":null},"taskManager":{"resource":{"cpu":0.5,"memory":"1024m","ephemeralStorage":null},"replicas":2,"podTemplate":{"metadata":{"labels":{"azure.workload.identity/use":"true"}},"spec":{"containers":[{"name":"flink-main-container","volumeMounts":[{"mountPath":"/pv","name":"taskmanager-storage"}]}],"securityContext":{"fsGroup":9999},"volumes":[{"ephemeral":{"volumeClaimTemplate":{"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"20Gi"}},"storageClassName":"managed-csi"}}},"name":"taskmanager-storage"}]}}},"logConfiguration":null,"mode":"standalone"},"resource_metadata":{"apiVersion":"flink.apache.org/v1beta1","metadata":{"generation":2},"firstDeployment":true}}'
+    lastStableSpec: '{"spec":{"job":null,"restartNonce":null,"flinkConfiguration":{"execution.checkpointing.interval":"30
+      s","execution.checkpointing.max-retained-checkpoints":"5","execution.checkpointing.min-pause":"5
+      s","execution.checkpointing.mode":"EXACTLY_ONCE","execution.checkpointing.timeout":"5
+      min","fs.azure.account.auth.type.flinkstorage911.dfs.core.windows.net":"OAuth","fs.azure.account.oauth.provider.type.flinkstorage911.dfs.core.windows.net":"org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider","fs.azure.account.oauth2.client.id.flinkstorage911.dfs.core.windows.net":"${env.AZURE_CLIENT_ID}","fs.azure.account.oauth2.msi.tenant.flinkstorage911.dfs.core.windows.net":"${env.AZURE_TENANT_ID}","fs.azure.account.oauth2.token.file.flinkstorage911.dfs.core.windows.net":"${env.AZURE_FEDERATED_TOKEN_FILE}","high-availability.storageDir":"abfss://flink-ha@flinkstorage911.dfs.core.windows.net/ha","high-availability.type":"kubernetes","state.backend.incremental":"true","state.backend.local-recovery":"true","state.backend.type":"rocksdb","state.checkpoints.dir":"abfss://flink-checkpoints@flinkstorage911.dfs.core.windows.net/checkpoints","state.savepoints.dir":"abfss://flink-savepoints@flinkstorage911.dfs.core.windows.net/savepoints","taskmanager.state.local.root-dirs":"/pv/localState"},"image":"xlen911/flink-azure:1.19.3-wi-test2","imagePullPolicy":"Always","serviceAccount":"flink","flinkVersion":"v1_19","ingress":null,"podTemplate":{"metadata":{"labels":{"azure.workload.identity/use":"true"}}},"jobManager":{"resource":{"cpu":0.5,"memory":"1024m","ephemeralStorage":null},"replicas":1,"podTemplate":null},"taskManager":{"resource":{"cpu":0.5,"memory":"1024m","ephemeralStorage":null},"replicas":2,"podTemplate":{"metadata":{"labels":{"azure.workload.identity/use":"true"}},"spec":{"containers":[{"name":"flink-main-container","volumeMounts":[{"mountPath":"/pv","name":"taskmanager-storage"}]}],"securityContext":{"fsGroup":9999},"volumes":[{"ephemeral":{"volumeClaimTemplate":{"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"20Gi"}},"storageClassName":"managed-csi"}}},"name":"taskmanager-storage"}]}}},"logConfiguration":null,"mode":"standalone"},"resource_metadata":{"apiVersion":"flink.apache.org/v1beta1","metadata":{"generation":2},"firstDeployment":true}}'
+    reconciliationTimestamp: 1791857329360
+    state: DEPLOYED

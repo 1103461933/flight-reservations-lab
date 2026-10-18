@@ -1,0 +1,48 @@
+{{- if .Values.couchbase.createResources }}
+apiVersion: couchbase.com/v2
+kind: CouchbaseBucket
+metadata:
+  name: {{ .Values.couchbase.bucketName }}
+  namespace: {{ .Values.tenant.sharedNamespace }}
+spec:
+  memoryQuota: {{ .Values.couchbase.memoryQuota }}
+  replicas: 0
+  enableFlush: false
+  evictionPolicy: fullEviction
+  compressionMode: passive
+  scopes:
+    managed: true
+    resources:
+      - kind: CouchbaseScope
+        name: {{ .Values.couchbase.scopeName }}
+---
+apiVersion: couchbase.com/v2
+kind: CouchbaseScope
+metadata:
+  name: {{ .Values.couchbase.scopeName }}
+  namespace: {{ .Values.tenant.sharedNamespace }}
+spec:
+  collections:
+    managed: true
+    resources:
+      - kind: CouchbaseCollection
+        name: {{ .Values.couchbase.bookingsCollectionName }}
+      - kind: CouchbaseCollection
+        name: {{ .Values.couchbase.collectionName }}
+---
+apiVersion: couchbase.com/v2
+kind: CouchbaseCollection
+metadata:
+  name: {{ .Values.couchbase.bookingsCollectionName }}
+  namespace: {{ .Values.tenant.sharedNamespace }}
+spec:
+  maxTTL: "0"
+---
+apiVersion: couchbase.com/v2
+kind: CouchbaseCollection
+metadata:
+  name: {{ .Values.couchbase.collectionName }}
+  namespace: {{ .Values.tenant.sharedNamespace }}
+spec:
+  maxTTL: "0"
+{{- end }}

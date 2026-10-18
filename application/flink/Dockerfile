@@ -1,6 +1,10 @@
-FROM flink:1.19.3-scala_2.12-java17
+﻿FROM flink:1.19.3-scala_2.12-java17
 
 USER root
+
+# ==================================================
+# 1. Install Python and system dependencies
+# ==================================================
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -9,45 +13,82 @@ RUN apt-get update \
         python3-dev \
         build-essential \
         ca-certificates \
+        curl \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
 ENV PYFLINK_CLIENT_EXECUTABLE=python
+ENV PYTHONUNBUFFERED=1
 
-COPY requirements.txt /tmp/requirements.txt
+# ==================================================
+# 2. Install Python application dependencies
+# ==================================================
+
+COPY application/flink/requirements.txt /tmp/requirements.txt
 
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
     && rm -f /tmp/requirements.txt
 
-# Instalar el plugin Azure en el directorio de plugins de Flink.
-# El build debe fallar si no existe el JAR correspondiente.
-RUN set -eux; \
-    mkdir -p /opt/flink/plugins/azure-fs-hadoop; \
-    set -- /opt/flink/opt/flink-azure-fs-hadoop-1.19.3.jar; \
-    if [ ! -f "$1" ]; then \
-        echo "ERROR: no se encontró flink-azure-fs-hadoop-1.19.3.jar"; \
-        exit 1; \
-    fi; \
-    cp "$1" /opt/flink/plugins/azure-fs-hadoop/
+# ==================================================
+# 3. Install PyFlink runtime JAR
+# ==================================================
 
-# Copiar las dependencias Jackson sin sombrear que estén disponibles
-# en la distribución. Son necesarias si el plugin las requiere.
 RUN set -eux; \
-    find /opt/flink/lib /opt/flink/opt \
-        -maxdepth 1 \
-        -type f \
-        \( \
-            -name 'jackson-core-*.jar' \
-            -o -name 'jackson-databind-*.jar' \
-            -o -name 'jackson-annotations-*.jar' \
-    \) \
-        -exec cp -v {} /opt/flink/plugins/azure-fs-hadoop/ \;
+    test -f /opt/flink/opt/flink-python-1.19.3.jar; \
+    cp /opt/flink/opt/flink-python-1.19.3.jar \
+       /opt/flink/lib/flink-python-1.19.3.jar; \
+    chown flink:flink \
+       /opt/flink/lib/flink-python-1.19.3.jar
+
+# ==================================================
+# 4. Install Kafka connector and Kafka clients
+# ==================================================
+
+RUN set -eux; \
+    rm -f /opt/flink/lib/flink-connector-kafka-*.jar; \
+    rm -f /opt/flink/lib/flink-sql-connector-kafka-*.jar; \
+    rm -f /opt/flink/lib/kafka-clients-*.jar; \
+    curl -fSL \
+      "https://repo.maven.apache.org/maven2/org/apache/flink/flink-connector-kafka/3.3.0-1.19/flink-connector-kafka-3.3.0-1.19.jar" \
+      -o /opt/flink/lib/flink-connector-kafka-3.3.0-1.19.jar; \
+    curl -fSL \
+      "https://repo.maven.apache.org/maven2/org/apache/kafka/kafka-clients/3.4.0/kafka-clients-3.4.0.jar" \
+      -o /opt/flink/lib/kafka-clients-3.4.0.jar; \
+    chown flink:flink \
+      /opt/flink/lib/flink-connector-kafka-3.3.0-1.19.jar \
+      /opt/flink/lib/kafka-clients-3.4.0.jar
+
+# ==================================================
+# 5. Install Azure filesystem plugin
+# ==================================================
+
+RUN mkdir -p /opt/flink/plugins/azure-fs-hadoop
+
+COPY flink/flink-azure-fs-hadoop-1.19.3.jar \
+     /opt/flink/plugins/azure-fs-hadoop/
+
+COPY flink/extra-jars/ \
+     /opt/flink/plugins/azure-fs-hadoop/
+
+RUN chown -R flink:flink \
+    /opt/flink/plugins/azure-fs-hadoop
+
+# ==================================================
+# 6. Copy PyFlink application
+# ==================================================
 
 RUN mkdir -p /opt/flink/usrlib \
-    && chown -R flink:flink /opt/flink/usrlib \
-    && chown -R flink:flink /opt/flink/plugins/azure-fs-hadoop
+    && chown -R flink:flink /opt/flink/usrlib
 
-COPY src/flight_reservations.py /opt/flink/usrlib/flight_reservations.py
+COPY application/flink/src/flight_reservations.py \
+     /opt/flink/usrlib/flight_reservations.py
+
+RUN chown flink:flink \
+    /opt/flink/usrlib/flight_reservations.py
+
+# ==================================================
+# 7. Runtime configuration
+# ==================================================
 
 USER flink
 

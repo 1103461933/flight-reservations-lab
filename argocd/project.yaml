@@ -4,15 +4,20 @@ metadata:
   name: stratos-rnd-dev
   namespace: argocd
 spec:
-  description: "Flight reservations lab — GitOps"
+  description: "Flight reservations lab — GitOps development environment"
+
   sourceRepos:
-    - "https://github.com/<ORG>/flight-reservations-lab.git"
+    - "https://github.com/1103461933/flight-reservations-lab.git"
+    
+
   destinations:
-    - namespace: stratos-rnd-dev
-      server: https://kubernetes.default.svc
+    - server: https://kubernetes.default.svc
+      namespace: stratos-rnd-dev
+
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
+
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"

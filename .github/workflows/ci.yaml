@@ -4,10 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag (e.g. 1.0.1)"
+        description: "Image tag (e.g. 1.19.3-pyflink-tenants-1)"
         required: true
         default: "1.0.1"
         type: string
+
+      update_legacy_flink:
+        description: "Also update the legacy Flink deployment image"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -47,13 +53,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate Flink Dockerfile
+      - name: Validate Flink Dockerfile and application
         run: |
           set -euo pipefail
 
           test -f application/flink/Dockerfile
           test -f application/flink/requirements.txt
           test -f application/flink/src/flight_reservations.py
+          test -f flink/flink-azure-fs-hadoop-1.19.3.jar
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -67,7 +74,7 @@ jobs:
       - name: Build and push Flink image
         uses: docker/build-push-action@v6
         with:
-          context: ./application/flink
+          context: .
           file: ./application/flink/Dockerfile
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/flink-azure:${{ inputs.tag }}
@@ -148,7 +155,7 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/flight-reservations-validator:${{ inputs.tag }}
 
   # --------------------------------------------------
-  # 5. Update Kubernetes and Argo Workflows manifests
+  # 5. Update Kubernetes, Helm and Argo Workflows manifests
   # --------------------------------------------------
   update-manifests:
     name: Update image tags in manifests
@@ -173,7 +180,7 @@ jobs:
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ inputs.tag }}
-
+          UPDATE_LEGACY_FLINK: ${{ inputs.update_legacy_flink }}
         run: |
           set -euo pipefail
 
@@ -185,33 +192,50 @@ jobs:
 
           username = os.environ["DOCKERHUB_USERNAME"]
           tag = os.environ["IMAGE_TAG"]
+          update_legacy = (
+              os.environ.get("UPDATE_LEGACY_FLINK", "false").lower()
+              == "true"
+          )
 
-          manifests = {
-              "flink/flink-deployment.yaml": (
-                  "flink-azure",
-              ),
+          # Legacy deployment is intentionally excluded by default.
+          image_manifests = {
               "argo-workflows/integration-test-workflow-template.yaml": (
                   "flight-reservation-producer",
                   "flight-reservations-validator",
               ),
           }
 
-          for filename, expected_images in manifests.items():
+          if update_legacy:
+              image_manifests["flink/flink-deployment.yaml"] = (
+                  "flink-azure",
+              )
+
+          # These charts use a nested Helm values structure:
+          #
+          # flink:
+          #   image:
+          #     repository: xlen911/flink-azure
+          #     tag: "..."
+          #
+          # Update only flink.image.tag, not unrelated tags.
+          helm_values = (
+              "charts/flink-indigo/values.yaml",
+              "charts/flink-tui/values.yaml",
+          )
+
+          modified_files = []
+
+          def update_image_manifest(filename, expected_images):
               path = Path(filename)
 
               if not path.is_file():
-                  sys.exit(
-                      f"ERROR: Manifest not found: {filename}"
-                  )
+                  sys.exit(f"ERROR: Manifest not found: {filename}")
 
               text = path.read_text(encoding="utf-8")
               lines = text.splitlines(keepends=True)
 
               updated_lines = []
-              counts = {
-                  image_name: 0
-                  for image_name in expected_images
-              }
+              counts = {name: 0 for name in expected_images}
 
               for line in lines:
                   updated = line
@@ -242,55 +266,166 @@ jobs:
                   updated_lines.append(updated)
 
               missing = [
-                  image_name
-                  for image_name, count in counts.items()
+                  name for name, count in counts.items()
                   if count == 0
               ]
 
               if missing:
                   sys.exit(
-                      f"ERROR: No image reference found for "
-                      f"{missing} in {filename}. "
-                      "Check the manifest image names."
+                      f"ERROR: No image reference found for {missing} "
+                      f"in {filename}. Check the manifest."
                   )
 
-              path.write_text(
-                  "".join(updated_lines),
-                  encoding="utf-8",
-              )
+              new_text = "".join(updated_lines)
+
+              if new_text != text:
+                  path.write_text(new_text, encoding="utf-8")
+                  modified_files.append(filename)
 
               print(f"Updated {filename}: {counts}")
 
+          def update_helm_values(filename):
+              path = Path(filename)
+
+              if not path.is_file():
+                  sys.exit(f"ERROR: Helm values not found: {filename}")
+
+              text = path.read_text(encoding="utf-8")
+              lines = text.splitlines(keepends=True)
+
+              updated_lines = []
+              in_flink = False
+              in_image = False
+              repository_found = False
+              tag_count = 0
+
+              for line in lines:
+                  stripped = line.lstrip()
+                  indent = len(line) - len(stripped)
+
+                  # Detect a top-level YAML key.
+                  if indent == 0 and stripped.strip():
+                      in_flink = bool(
+                          re.match(r"^flink\s*:", stripped)
+                      )
+                      in_image = False
+
+                  elif in_flink and indent == 2:
+                      in_image = bool(
+                          re.match(r"^image\s*:", stripped)
+                      )
+
+                  if in_flink and in_image and indent == 4:
+                      if re.match(r"^repository\s*:", stripped):
+                          repository_found = bool(
+                              re.match(
+                                  r"^repository\s*:\s*"
+                                  + re.escape(username)
+                                  + r"/flink-azure\s*(?:#.*)?$",
+                                  stripped.rstrip("\r\n"),
+                              )
+                          )
+
+                      if re.match(r"^tag\s*:", stripped):
+                          newline = (
+                              "\r\n" if line.endswith("\r\n")
+                              else "\n" if line.endswith("\n")
+                              else ""
+                          )
+
+                          prefix = line[:indent] + "tag: "
+                          updated_lines.append(
+                              prefix + f'"{tag}"' + newline
+                          )
+                          tag_count += 1
+                          continue
+
+                  updated_lines.append(line)
+
+              if not repository_found:
+                  sys.exit(
+                      f"ERROR: Expected repository "
+                      f"{username}/flink-azure not found under "
+                      f"flink.image in {filename}."
+                  )
+
+              if tag_count != 1:
+                  sys.exit(
+                      f"ERROR: Expected exactly one flink.image.tag "
+                      f"in {filename}; found {tag_count}."
+                  )
+
+              new_text = "".join(updated_lines)
+
+              if new_text != text:
+                  path.write_text(new_text, encoding="utf-8")
+                  modified_files.append(filename)
+
+              print(
+                  f"Updated {filename}: "
+                  f"repository={username}/flink-azure, tag={tag}"
+              )
+
+          for filename, expected_images in image_manifests.items():
+              update_image_manifest(filename, expected_images)
+
+          for filename in helm_values:
+              update_helm_values(filename)
+
+          if update_legacy:
+              print("Legacy Flink deployment image update enabled.")
+          else:
+              print(
+                  "Legacy Flink deployment unchanged. "
+                  "Set update_legacy_flink=true to update it."
+              )
+
+          print("Files modified:", modified_files)
           PY
 
       - name: Review manifest changes
+        env:
+          UPDATE_LEGACY_FLINK: ${{ inputs.update_legacy_flink }}
         run: |
           set -euo pipefail
 
           git diff --check
-          git diff -- flink/flink-deployment.yaml
-          git diff -- argo-workflows/integration-test-workflow-template.yaml
+          git diff -- \
+            charts/flink-indigo/values.yaml \
+            charts/flink-tui/values.yaml \
+            argo-workflows/integration-test-workflow-template.yaml
+
+          if [[ "$UPDATE_LEGACY_FLINK" == "true" ]]; then
+            git diff -- flink/flink-deployment.yaml
+          fi
 
       - name: Commit and push manifest changes
         env:
           IMAGE_TAG: ${{ inputs.tag }}
-
+          UPDATE_LEGACY_FLINK: ${{ inputs.update_legacy_flink }}
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- \
-            flink/flink-deployment.yaml \
-            argo-workflows/integration-test-workflow-template.yaml; then
+          files=(
+            charts/flink-indigo/values.yaml
+            charts/flink-tui/values.yaml
+            argo-workflows/integration-test-workflow-template.yaml
+          )
+
+          if [[ "$UPDATE_LEGACY_FLINK" == "true" ]]; then
+            files+=(flink/flink-deployment.yaml)
+          fi
+
+          if git diff --quiet -- "${files[@]}"; then
             echo "No manifest changes required."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add \
-            flink/flink-deployment.yaml \
-            argo-workflows/integration-test-workflow-template.yaml
+          git add "${files[@]}"
 
           git commit -m "chore: update image tags to ${IMAGE_TAG}"
           git push

@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: flight-reservations-tenants
+  namespace: argocd
+spec:
+  description: "Tenant-specific Flink Application deployments for Indigo and TUI"
+  sourceRepos:
+    - "https://github.com/1103461933/flight-reservations-lab.git"
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: flink-indigo
+    - server: https://kubernetes.default.svc
+      namespace: flink-tui
+    - server: https://kubernetes.default.svc
+      namespace: stratos-rnd-dev
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
