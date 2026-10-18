@@ -149,7 +149,7 @@ spec:
       - "-pyclientexec"
       - "/usr/bin/python3"
       - "-py"
-      - "/opt/flink/usrlib/flight_reservations.py"
+      - "/opt/flink/flight_reservations.py"
     parallelism: {{ .Values.flink.parallelism }}
     upgradeMode: savepoint
     state: {{ .Values.flink.jobState }}
