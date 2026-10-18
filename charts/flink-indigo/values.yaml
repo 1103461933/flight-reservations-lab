@@ -1,3 +1,4 @@
+
 tenant:
   id: indigo
   sharedNamespace: stratos-rnd-dev
@@ -70,10 +71,10 @@ couchbase:
 
   secretName: couchbase-auth
 
-  bucketName: flight-reservations
-  scopeName: reservations
-  collectionName: processed
-  bookingsCollectionName: bookings
+  bucketName: flight-reservations-indigo
+  scopeName: reservations-indigo
+  collectionName: processed-indigo
+  bookingsCollectionName: bookings-indigo
 
-  createResources: false
+  createResources: true
   memoryQuota: 128Mi
