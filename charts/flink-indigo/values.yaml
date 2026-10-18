@@ -76,4 +76,4 @@ couchbase:
   bookingsCollectionName: bookings
 
   createResources: false
-  memoryQuota: 256Mi
+  memoryQuota: 128Mi
