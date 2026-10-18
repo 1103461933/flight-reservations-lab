@@ -40,7 +40,7 @@ spec:
 
     - name: produce-events
       container:
-        image: xlen911/flight-reservation-producer:1.19.3-pyflink-tenants-6
+        image: xlen911/flight-reservation-producer:1.19.3-pyflink-tenants-7
         command: [python, /app/producer.py]
         env:
           - name: KAFKA_BOOTSTRAP
@@ -50,7 +50,7 @@ spec:
 
     - name: wait-and-validate
       container:
-        image: xlen911/flight-reservations-validator:1.19.3-pyflink-tenants-6
+        image: xlen911/flight-reservations-validator:1.19.3-pyflink-tenants-7
         command: [/validate.sh]
         env:
           - name: COUCHBASE_HOST
