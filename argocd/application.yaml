@@ -15,7 +15,8 @@ spec:
     path: .
     directory:
       recurse: true
-      include: '{namespace,quota,kafka,couchbase,flink,argo-workflows}/**/*.yaml'
+      #include: '{namespace,quota,kafka,couchbase,flink,argo-workflows}/**/*.yaml'
+      include: '{namespace,quota,kafka,couchbase/shared,flink,argo-workflows}/**/*.yaml'
 
   destination:
     server: https://kubernetes.default.svc
