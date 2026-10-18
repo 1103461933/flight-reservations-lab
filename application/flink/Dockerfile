@@ -84,7 +84,7 @@ COPY application/flink/src/flight_reservations.py \
      /opt/flink/flight_reservations.py
 
 RUN chown flink:flink \
-    /opt/flink/usrlib/flight_reservations.py
+    /opt/flink/flight_reservations.py
 
 # ==================================================
 # 7. Runtime configuration
