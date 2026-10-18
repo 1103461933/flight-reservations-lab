@@ -1,0 +1,20 @@
+﻿apiVersion: v1
+kind: Pod
+metadata:
+  name: producer-tui
+  namespace: stratos-rnd-dev
+  labels:
+    app: producer-tui
+spec:
+  restartPolicy: Never
+  containers:
+    - name: producer
+      image: python:3.12-slim
+      command: ["sleep", "3600"]
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "250m"
+          memory: "256Mi"

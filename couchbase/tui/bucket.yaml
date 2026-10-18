@@ -1,0 +1,16 @@
+apiVersion: couchbase.com/v2
+kind: CouchbaseBucket
+metadata:
+  name: flight-reservations-tui
+  namespace: stratos-rnd-dev
+spec:
+  memoryQuota: 128Mi
+  replicas: 0
+  enableFlush: false
+  evictionPolicy: fullEviction
+  compressionMode: passive
+  scopes:
+    managed: true
+    resources:
+      - kind: CouchbaseScope
+        name: reservations-tui
