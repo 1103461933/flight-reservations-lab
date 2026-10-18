@@ -10,7 +10,7 @@ flink:
 
   image:
     repository: xlen911/flink-azure
-    tag: "1.19.3-pyflink-tenants-10"
+    tag: "1.19.3-pyflink-tenants-11"
     pullPolicy: Always
 
   serviceAccount: flight-reservation-indigo
