@@ -76,4 +76,4 @@ couchbase:
   bookingsCollectionName: bookings-tui
 
   createResources: true
-  memoryQuota: 256Mi
+  memoryQuota: 128Mi
