@@ -63,13 +63,10 @@ RUN chown -R flink:flink /opt/flink/plugins/azure-fs-hadoop
 # ==================================================
 # 6. Copy PyFlink application
 # ==================================================
-RUN mkdir -p /opt/flink/usrlib \
-    && chown -R flink:flink /opt/flink/usrlib
-
 COPY application/flink/src/flight_reservations.py \
      /opt/flink/flight_reservations.py
 
-RUN chown flink:flink /opt/flink/usrlib/flight_reservations.py
+RUN chown flink:flink /opt/flink/flight_reservations.py
 
 # ==================================================
 # 7. Runtime configuration
@@ -77,3 +74,4 @@ RUN chown flink:flink /opt/flink/usrlib/flight_reservations.py
 USER flink
 
 WORKDIR /opt/flink
+
